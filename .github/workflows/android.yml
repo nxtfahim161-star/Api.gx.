@@ -21,6 +21,14 @@ jobs:
           channel: stable
           cache: true
 
+      - name: Create Flutter project
+        run: flutter create --org com.example --project-name gasi_candle_ai --platforms android .
+
+      - name: Apply our files
+        run: |
+          cp -r overlay/. .
+          rm -rf test
+
       - run: flutter pub get
 
       - run: flutter analyze --no-fatal-infos
