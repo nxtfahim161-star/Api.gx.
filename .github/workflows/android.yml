@@ -1,0 +1,339 @@
+name: Build APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Create Flutter project
+        run: flutter create --org com.example --project-name gasi_candle_ai --platforms android .
+
+      - name: Add app icon
+        run: |
+          if [ -f logo.png ]; then
+            mkdir -p assets
+            cp logo.png assets/logo.png
+            flutter pub add dev:flutter_launcher_icons
+            cat >> pubspec.yaml <<'EOF'
+
+          flutter_launcher_icons:
+            android: true
+            ios: false
+            image_path: "assets/logo.png"
+          EOF
+            dart run flutter_launcher_icons
+            sed -i 's/^flutter:$/flutter:\n  assets:\n    - assets\/logo.png/' pubspec.yaml
+          else
+            echo "logo.png নেই, icon ধাপ বাদ"
+          fi
+          - name: Write main.dart
+        run: |
+          cat > lib/main.dart <<'EOF'
+          import 'dart:convert';
+          import 'package:flutter/material.dart';
+          import 'package:flutter/services.dart';
+
+          void main() => runApp(const GasiApp());
+
+          class GasiApp extends StatelessWidget {
+            const GasiApp({super.key});
+            @override
+            Widget build(BuildContext context) {
+              return MaterialApp(
+                title: 'gasi candle analysis AI',
+                debugShowCheckedModeBanner: false,
+                theme: ThemeData(
+                  brightness: Brightness.dark,
+                  scaffoldBackgroundColor: const Color(0xFF08080D),
+                  colorScheme: ColorScheme.fromSeed(
+                    seedColor: const Color(0xFF8B5CF6),
+                    brightness: Brightness.dark,
+                  ),
+                  useMaterial3: true,
+                ),
+                home: const HomeScreen(),
+              );
+            }
+          }
+
+          class AIResult {
+            final double up;
+            final double down;
+            final String pattern;
+            final String sentiment;
+            final String reason;
+            const AIResult(this.up, this.down, this.pattern, this.sentiment, this.reason);
+
+            static AIResult? parse(String text) {
+              try {
+                var t = text.trim();
+                final a = t.indexOf('{');
+                final b = t.lastIndexOf('}');
+                if (a < 0 || b <= a) return null;
+                t = t.substring(a, b + 1);
+                final m = jsonDecode(t);
+                if (m is! Map) return null;
+                final up = (m['up_probability_percent'] as num).toDouble();
+                final down = (m['down_probability_percent'] as num).toDouble();
+                if (!up.isFinite || !down.isFinite) return null;
+                if (up < 0 || up > 100 || down < 0 || down > 100) return null;
+                if ((up + down - 100).abs() > 0.1) return null;
+                final pattern = m['technical_pattern'].toString().trim();
+                final sentiment = m['market_sentiment'].toString().trim();
+                final reason = m['summary_reason'].toString().trim();
+                if (pattern.isEmpty || reason.isEmpty) return null;
+                if (!const ['Bullish', 'Bearish', 'Neutral'].contains(sentiment)) return null;
+                return AIResult(up, down, pattern, sentiment, reason);
+              } catch (_) {
+                return null;
+              }
+            }
+          }
+
+          class HomeScreen extends StatefulWidget {
+            const HomeScreen({super.key});
+            @override
+            State<HomeScreen> createState() => _HomeScreenState();
+          }
+
+          class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
+            static const _ch = MethodChannel('gasi/native');
+            static const _purple = Color(0xFF8B5CF6);
+            static const _lilac = Color(0xFFC084FC);
+            static const _green = Color(0xFF38D996);
+            static const _red = Color(0xFFFF6685);
+            static const _amber = Color(0xFFFFB45C);
+
+            final TextEditingController _ctrl = TextEditingController();
+            bool _granted = false;
+            bool _starting = false;
+            AIResult? _result;
+
+            @override
+            void initState() {
+              super.initState();
+              WidgetsBinding.instance.addObserver(this);
+              _check();
+            }
+
+            @override
+            void dispose() {
+              WidgetsBinding.instance.removeObserver(this);
+              _ctrl.dispose();
+              super.dispose();
+            }
+
+            @override
+            void didChangeAppLifecycleState(AppLifecycleState s) {
+              if (s == AppLifecycleState.resumed) _check();
+            }
+
+            Future<void> _check() async {
+              try {
+                final r = await _ch.invokeMethod<bool>('hasOverlayPermission');
+                if (mounted) setState(() => _granted = r ?? false);
+              } catch (_) {}
+            }
+
+            Future<void> _start() async {
+              if (_starting) return;
+              setState(() => _starting = true);
+              try {
+                await _ch.invokeMethod('startOverlay');
+              } on PlatformException catch (e) {
+                _msg(e.message ?? 'শুরু করা যায়নি');
+              } finally {
+                if (mounted) setState(() => _starting = false);
+              }
+            }
+
+            Future<void> _stop() async {
+              try {
+                await _ch.invokeMethod('stopOverlay');
+                _msg('Floating G বন্ধ করা হয়েছে');
+              } catch (_) {
+                _msg('বন্ধ করা যায়নি');
+              }
+            }
+
+            Future<void> _pasteFromClipboard() async {
+              final d = await Clipboard.getData(Clipboard.kTextPlain);
+              if (d?.text != null) setState(() => _ctrl.text = d!.text!);
+            }
+
+            void _showResult() {
+              final r = AIResult.parse(_ctrl.text);
+              if (r == null) {
+                _msg('JSON সঠিক নয় (UP+DOWN=100 এবং সব field লাগবে)');
+                return;
+              }
+              setState(() => _result = r);
+              FocusScope.of(context).unfocus();
+            }
+
+            void _msg(String t) {
+              if (!mounted) return;
+              ScaffoldMessenger.of(context)
+                ..hideCurrentSnackBar()
+                ..showSnackBar(SnackBar(content: Text(t), behavior: SnackBarBehavior.floating));
+            }
+
+            @override
+            Widget build(BuildContext context) {
+              return Scaffold(
+                body: SafeArea(
+                  child: RefreshIndicator(
+                    onRefresh: _check,
+                    child: ListView(
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      padding: const EdgeInsets.fromLTRB(20, 18, 20, 30),
+                      children: [
+                        _header(),
+                        const SizedBox(height: 22),
+                        _captureCard(),
+                        const SizedBox(height: 16),
+                        _permissionCard(),
+                        const SizedBox(height: 16),
+                        _pasteCard(),
+                        const SizedBox(height: 16),
+                        _resultCard(),
+                        const SizedBox(height: 16),
+                        _howCard(),
+                        const SizedBox(height: 16),
+                        _disclaimer(),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            }Widget _header() {
+              return Row(
+                children: [
+                  Container(
+                    width: 58,
+                    height: 58,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(18),
+                      boxShadow: [
+                        BoxShadow(color: _purple.withOpacity(0.3), blurRadius: 20, spreadRadius: 1),
+                      ],
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(18),
+                      child: Image.asset(
+                        'assets/logo.png',
+                        fit: BoxFit.cover,
+                        errorBuilder: (c, e, s) => Container(
+                          color: const Color(0xFF17121B),
+                          alignment: Alignment.center,
+                          child: const Text('G',
+                              style: TextStyle(
+                                  fontSize: 30, fontWeight: FontWeight.w900, color: _lilac)),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 14),
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('gasi candle analysis AI',
+                            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
+                        SizedBox(height: 4),
+                        Text('Hybrid AI Chart Analysis',
+                            style: TextStyle(fontSize: 13, color: Color(0xFFAAA4AE))),
+                      ],
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                    decoration: BoxDecoration(
+                      color: _purple.withOpacity(0.12),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: _purple.withOpacity(0.3)),
+                    ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.auto_awesome, size: 14, color: _lilac),
+                        SizedBox(width: 5),
+                        Text('AI',
+                            style: TextStyle(
+                                fontSize: 12, fontWeight: FontWeight.w700, color: _lilac)),
+                      ],
+                    ),
+                  ),
+                ],
+              );
+            }
+
+            Widget _captureCard() {
+              return Container(
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(26),
+                  gradient: const LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [Color(0xFF21142A), Color(0xFF100D14)],
+                  ),
+                  border: Border.all(color: _purple.withOpacity(0.25)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          width: 48,
+                          height: 48,
+                          decoration: BoxDecoration(
+                              color: _purple.withOpacity(0.16), shape: BoxShape.circle),
+                          child: const Icon(Icons.analytics_outlined, color: _lilac, size: 25),
+                        ),
+                        const SizedBox(width: 13),
+                        const Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('Chart Analysis',
+                                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
+                              SizedBox(height: 3),
+                              Text('আপনার বর্তমান chart capture করুন',
+                                  style: TextStyle(fontSize: 12, color: Color(0xFFAAA4AE))),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 18),
+                    const Text(
+                      'Start চাপুন, তারপর chart screen-এ গিয়ে ভাসমান G button চাপুন।',
+                      style: TextStyle(fontSize: 14, height: 1.5, color: Color(0xFFD0CBD3)),
+                    ),
+                    const SizedBox(height: 18),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 54,
+                      child: FilledButton(
+                        onPressed: (!_granted || _starting) ? null : _start,
+                        style: FilledButton.styleFrom(
+                          backgroundColor: _purple,
+                          shape: Round
