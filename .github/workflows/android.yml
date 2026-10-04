@@ -41,8 +41,7 @@ jobs:
             sed -i 's/^flutter:$/flutter:\n  assets:\n    - assets\/logo.png/' pubspec.yaml
           else
             echo "logo.png নেই, icon ধাপ বাদ"
-          fi
-          - name: Write main.dart
+          fi- name: Write main.dart
         run: |
           cat > lib/main.dart <<'EOF'
           import 'dart:convert';
@@ -336,4 +335,941 @@ jobs:
                         onPressed: (!_granted || _starting) ? null : _start,
                         style: FilledButton.styleFrom(
                           backgroundColor: _purple,
-                          shape: Round
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(17)),
+                        ),
+                        child: _starting
+                            ? const SizedBox(
+                                width: 23,
+                                height: 23,
+                                child: CircularProgressIndicator(
+                                    strokeWidth: 2.5, color: Colors.white))
+                            : const Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(Icons.screen_share_outlined, size: 21),
+                                  SizedBox(width: 9),
+                                  Text('Start Chart Capture',
+                                      style: TextStyle(
+                                          fontSize: 15, fontWeight: FontWeight.w700)),
+                                ],
+                              ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 48,
+                      child: OutlinedButton.icon(
+                        onPressed: _stop,
+                        icon: const Icon(Icons.stop_circle_outlined, size: 19),
+                        label: const Text('Stop Floating G'),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: const Color(0xFFE1D9E5),
+                          side: BorderSide(color: _lilac.withOpacity(0.35)),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }
+
+            Widget _permissionCard() {
+              final c = _granted ? _green : _amber;
+              return Container(
+                padding: const EdgeInsets.all(18),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF121116),
+                  borderRadius: BorderRadius.circular(22),
+                  border: Border.all(color: c.withOpacity(0.25)),
+                ),
+                child: Column(
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          width: 42,
+                          height: 42,
+                          decoration:
+                              BoxDecoration(color: c.withOpacity(0.12), shape: BoxShape.circle),
+                          child: Icon(_granted ? Icons.check : Icons.lock_outline,
+                              color: c, size: 21),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                _granted
+                                    ? 'Overlay Permission Active'
+                                    : 'Overlay Permission Required',
+                                style: const TextStyle(
+                                    fontSize: 15, fontWeight: FontWeight.w700),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                _granted
+                                    ? 'Floating G button ব্যবহার করা যাবে।'
+                                    : 'অন্য app-এর উপর G button দেখাতে permission দিন।',
+                                style: const TextStyle(
+                                    fontSize: 12, height: 1.4, color: Color(0xFF97919A)),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    if (!_granted) ...[
+                      const SizedBox(height: 14),
+                      SizedBox(
+                        width: double.infinity,
+                        height: 45,
+                        child: OutlinedButton(
+                          onPressed: () => _ch.invokeMethod('openOverlaySettings'),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: _lilac,
+                            side: BorderSide(color: _purple.withOpacity(0.4)),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14)),
+                          ),
+                          child: const Text('Open Permission Settings'),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              );
+            }Widget _pasteCard() {
+              return Container(
+                padding: const EdgeInsets.all(18),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF111015),
+                  borderRadius: BorderRadius.circular(22),
+                  border: Border.all(color: Colors.white.withOpacity(0.07)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Row(
+                      children: [
+                        Icon(Icons.data_object, size: 20, color: Color(0xFFB86CFF)),
+                        SizedBox(width: 9),
+                        Text('AI-র JSON উত্তর',
+                            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    const Text(
+                      'AI app-এর JSON উত্তর কপি করে এখানে paste করুন।',
+                      style: TextStyle(fontSize: 12, color: Color(0xFF8F8993)),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: _ctrl,
+                      minLines: 4,
+                      maxLines: 8,
+                      style: const TextStyle(fontSize: 12),
+                      decoration: InputDecoration(
+                        hintText: '{ "up_probability_percent": ... }',
+                        filled: true,
+                        fillColor: Colors.white.withOpacity(0.04),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(14),
+                          borderSide: BorderSide.none,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: _pasteFromClipboard,
+                            icon: const Icon(Icons.content_paste, size: 18),
+                            label: const Text('Paste'),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: FilledButton(
+                            onPressed: _showResult,
+                            style: FilledButton.styleFrom(backgroundColor: _purple),
+                            child: const Text('Result দেখান'),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              );
+            }
+
+            Widget _resultCard() {
+              final r = _result;
+              if (r == null) {
+                return Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF111015),
+                    borderRadius: BorderRadius.circular(24),
+                    border: Border.all(color: Colors.white.withOpacity(0.07)),
+                  ),
+                  child: const Column(
+                    children: [
+                      Icon(Icons.candlestick_chart, size: 34, color: _lilac),
+                      SizedBox(height: 10),
+                      Text('AI Analysis Result',
+                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+                      SizedBox(height: 6),
+                      Text('এখনো কোনো বিশ্লেষণ হয়নি',
+                          style: TextStyle(fontSize: 12, color: Color(0xFF85808A))),
+                    ],
+                  ),
+                );
+              }
+              final bull = r.up >= r.down;
+              final c = bull ? _green : _red;
+              return Container(
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(26),
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      bull ? const Color(0xFF10251F) : const Color(0xFF29151A),
+                      const Color(0xFF100D13),
+                    ],
+                  ),
+                  border: Border.all(color: c.withOpacity(0.3)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(bull ? Icons.trending_up : Icons.trending_down, color: c, size: 28),
+                        const SizedBox(width: 10),
+                        const Expanded(
+                          child: Text('AI Analysis Result',
+                              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
+                        ),
+                        const Text('60 / 40',
+                            style: TextStyle(
+                                fontSize: 11, fontWeight: FontWeight.w700, color: _lilac)),
+                      ],
+                    ),
+                    const SizedBox(height: 18),
+                    Row(
+                      children: [
+                        Expanded(child: _probBox('UP', r.up, _green, Icons.arrow_upward)),
+                        const SizedBox(width: 12),
+                        Expanded(child: _probBox('DOWN', r.down, _red, Icons.arrow_downward)),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    _row(Icons.candlestick_chart, 'Technical Pattern', r.pattern),
+                    const SizedBox(height: 10),
+                    _row(Icons.public, 'Market Sentiment', r.sentiment),
+                    const SizedBox(height: 10),
+                    _row(Icons.notes_outlined, 'Reason', r.reason),
+                  ],
+                ),
+              );
+            }
+
+            Widget _probBox(String label, double v, Color c, IconData icon) {
+              return Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: c.withOpacity(0.07),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: c.withOpacity(0.22)),
+                ),
+                child: Column(
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(icon, color: c, size: 16),
+                        const SizedBox(width: 4),
+                        Text(label,
+                            style: TextStyle(
+                                color: c, fontSize: 12, fontWeight: FontWeight.w800)),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Text('${v.toStringAsFixed(1)}%',
+                        style: TextStyle(color: c, fontSize: 28, fontWeight: FontWeight.w900)),
+                  ],
+                ),
+              );
+            }
+
+            Widget _row(IconData icon, String label, String value) {
+              return Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.03),
+                  borderRadius: BorderRadius.circular(15),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(icon, size: 19, color: const Color(0xFFB86CFF)),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(label,
+                              style: const TextStyle(
+                                  fontSize: 11,
+                                  color: Color(0xFF85808A),
+                                  fontWeight: FontWeight.w600)),
+                          const SizedBox(height: 4),
+                          Text(value,
+                              style: const TextStyle(
+                                  fontSize: 13, height: 1.45, color: Color(0xFFD9D4DC))),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }Widget _howCard() {
+              const steps = [
+                ['Permission', 'Overlay permission দিন, যাতে অন্য app-এর উপর G button দেখা যায়।'],
+                ['Screen Capture', 'Start চাপলে Android screen capture-এর অনুমতি চাইবে।'],
+                ['Capture', 'Chart screen-এ G button চাপলে screenshot নেওয়া হবে।'],
+                ['AI Analysis', 'Screenshot ও prompt Share দিয়ে আপনার পছন্দের AI app-এ পাঠান।'],
+                ['Result', 'AI-র JSON উত্তর এখানে paste করলে UP/DOWN result দেখা যাবে।'],
+              ];
+              return Container(
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF111015),
+                  borderRadius: BorderRadius.circular(24),
+                  border: Border.all(color: Colors.white.withOpacity(0.07)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Row(
+                      children: [
+                        Icon(Icons.info_outline, size: 21, color: Color(0xFFB86CFF)),
+                        SizedBox(width: 9),
+                        Text('কীভাবে কাজ করে',
+                            style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    for (int i = 0; i < steps.length; i++)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 12),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Container(
+                              width: 30,
+                              height: 30,
+                              alignment: Alignment.center,
+                              decoration: BoxDecoration(
+                                color: _purple.withOpacity(0.13),
+                                shape: BoxShape.circle,
+                                border: Border.all(color: _purple.withOpacity(0.28)),
+                              ),
+                              child: Text('${i + 1}',
+                                  style: const TextStyle(
+                                      fontSize: 12, fontWeight: FontWeight.w800, color: _lilac)),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(steps[i][0],
+                                      style: const TextStyle(
+                                          fontSize: 14, fontWeight: FontWeight.w700)),
+                                  const SizedBox(height: 3),
+                                  Text(steps[i][1],
+                                      style: const TextStyle(
+                                          fontSize: 12,
+                                          height: 1.45,
+                                          color: Color(0xFF8F8993))),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                  ],
+                ),
+              );
+            }
+
+            Widget _disclaimer() {
+              return Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF171218),
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(color: _amber.withOpacity(0.16)),
+                ),
+                child: const Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(Icons.warning_amber_rounded, size: 20, color: _amber),
+                    SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        'AI probability একটি analytical estimate। এটি নিশ্চিত ভবিষ্যদ্বাণী নয়। Trading-এর সিদ্ধান্ত নেওয়ার আগে নিজে যাচাই করুন।',
+                        style: TextStyle(fontSize: 11, height: 1.5, color: Color(0xFF9B939E)),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }
+          }
+          EOF
+          rm -rf test- name: Write AndroidManifest
+        run: |
+          cat > android/app/src/main/AndroidManifest.xml <<'EOF'
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.INTERNET" />
+              <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+              <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+              <application
+                  android:label="gasi candle analysis AI"
+                  android:name="${applicationName}"
+                  android:icon="@mipmap/ic_launcher">
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true"
+                      android:launchMode="singleTop"
+                      android:theme="@style/LaunchTheme"
+                      android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
+                      android:hardwareAccelerated="true"
+                      android:windowSoftInputMode="adjustResize">
+                      <meta-data
+                          android:name="io.flutter.embedding.android.NormalTheme"
+                          android:resource="@style/NormalTheme" />
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+                  <service
+                      android:name=".OverlayService"
+                      android:exported="false"
+                      android:foregroundServiceType="mediaProjection" />
+                  <provider
+                      android:name="androidx.core.content.FileProvider"
+                      android:authorities="${applicationId}.fileprovider"
+                      android:exported="false"
+                      android:grantUriPermissions="true">
+                      <meta-data
+                          android:name="android.support.FILE_PROVIDER_PATHS"
+                          android:resource="@xml/file_paths" />
+                  </provider>
+                  <meta-data
+                      android:name="flutterEmbedding"
+                      android:value="2" />
+              </application>
+          </manifest>
+          EOF
+
+      - name: Write file_paths.xml
+        run: |
+          mkdir -p android/app/src/main/res/xml
+          cat > android/app/src/main/res/xml/file_paths.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <paths xmlns:android="http://schemas.android.com/apk/res/android">
+              <cache-path name="captures" path="captures/" />
+          </paths>
+          EOF- name: Write MainActivity
+        run: |
+          D=android/app/src/main/kotlin/com/example/gasi_candle_ai
+          mkdir -p $D
+          cat > $D/MainActivity.kt <<'EOF'
+          package com.example.gasi_candle_ai
+
+          import android.content.Intent
+          import android.media.projection.MediaProjectionManager
+          import android.net.Uri
+          import android.provider.Settings
+          import androidx.core.content.ContextCompat
+          import io.flutter.embedding.android.FlutterActivity
+          import io.flutter.embedding.engine.FlutterEngine
+          import io.flutter.plugin.common.MethodChannel
+
+          class MainActivity : FlutterActivity() {
+
+              private var pending: MethodChannel.Result? = null
+
+              override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
+                  super.configureFlutterEngine(flutterEngine)
+
+                  MethodChannel(
+                      flutterEngine.dartExecutor.binaryMessenger,
+                      "gasi/native"
+                  ).setMethodCallHandler { call, result ->
+                      when (call.method) {
+                          "hasOverlayPermission" ->
+                              result.success(Settings.canDrawOverlays(this))
+
+                          "openOverlaySettings" -> {
+                              startActivity(
+                                  Intent(
+                                      Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                      Uri.parse("package:" + packageName)
+                                  )
+                              )
+                              result.success(null)
+                          }
+
+                          "startOverlay" -> {
+                              if (!Settings.canDrawOverlays(this)) {
+                                  result.error("NO_PERMISSION", "Overlay permission নেই", null)
+                              } else if (pending != null) {
+                                  result.error("BUSY", "অপেক্ষা করুন", null)
+                              } else {
+                                  pending = result
+                                  val mpm = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+                                  startActivityForResult(mpm.createScreenCaptureIntent(), 7001)
+                              }
+                          }
+
+                          "stopOverlay" -> {
+                              stopService(Intent(this, OverlayService::class.java))
+                              result.success(null)
+                          }
+
+                          else -> result.notImplemented()
+                      }
+                  }
+              }
+
+              @Deprecated("Deprecated in Java")
+              override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+                  super.onActivityResult(requestCode, resultCode, data)
+                  if (requestCode != 7001) return
+
+                  val r = pending
+                  pending = null
+
+                  if (resultCode == android.app.Activity.RESULT_OK && data != null) {
+                      val i = Intent(this, OverlayService::class.java)
+                      i.putExtra("code", resultCode)
+                      i.putExtra("data", data)
+                      ContextCompat.startForegroundService(this, i)
+                      r?.success(null)
+                  } else {
+                      r?.error("DENIED", "Screen capture permission দেওয়া হয়নি", null)
+                  }
+              }
+          }
+          EOF- name: Write OverlayService
+        run: |
+          D=android/app/src/main/kotlin/com/example/gasi_candle_ai
+          cat > $D/OverlayService.kt <<'EOF'
+          package com.example.gasi_candle_ai
+
+          import android.app.Notification
+          import android.app.NotificationChannel
+          import android.app.NotificationManager
+          import android.app.Service
+          import android.content.ClipData
+          import android.content.Intent
+          import android.content.pm.ServiceInfo
+          import android.graphics.Bitmap
+          import android.graphics.Color
+          import android.graphics.PixelFormat
+          import android.graphics.drawable.GradientDrawable
+          import android.hardware.display.DisplayManager
+          import android.hardware.display.VirtualDisplay
+          import android.media.Image
+          import android.media.ImageReader
+          import android.media.projection.MediaProjection
+          import android.media.projection.MediaProjectionManager
+          import android.os.Build
+          import android.os.Handler
+          import android.os.IBinder
+          import android.os.Looper
+          import android.view.Gravity
+          import android.view.MotionEvent
+          import android.view.View
+          import android.view.WindowManager
+          import android.widget.TextView
+          import android.widget.Toast
+          import androidx.core.content.FileProvider
+          import java.io.File
+          import java.io.FileOutputStream
+          import kotlin.math.abs
+
+          class OverlayService : Service() {
+
+              companion object {
+                  private const val PROMPT = """
+          You are an advanced Hybrid Market Analyst AI.
+
+          You evaluate real-time chart screenshots by combining classical candlestick literature with current live market trends and sentiment data.
+
+          When a screenshot is received, execute the following steps:
+
+          1. TECHNICAL & BOOK KNOWLEDGE ANALYSIS
+
+          Identify candlestick patterns, wicks, body ratios, trend structure, and visible support/resistance levels strictly according to established classical candlestick and technical-analysis literature.
+
+          Analyze only information that is actually visible in the screenshot.
+
+          Where visible, consider: classical candlestick patterns, candle body size and body-to-range ratio, upper and lower wicks, bullish and bearish pressure, recent price action, trend direction, market structure, support and resistance, breakout or rejection, momentum, volume, and visible technical indicators.
+
+          Do not invent chart information that is not visible.
+
+          2. REAL-TIME MARKET CONTEXT & SENTIMENT
+
+          Identify the asset pair or financial instrument shown in the screenshot.
+
+          Use current or recent reliable information available to you to evaluate: current market sentiment, relevant financial news, relevant macroeconomic indicators, major market-moving events, current/recent market trends, and other important factors directly relevant to the identified asset.
+
+          Do not fabricate current news, sentiment, prices, macroeconomic information, or market events.
+
+          If current/recent market information is unavailable, do not guess it. Reflect the lack of live context in the final analysis.
+
+          3. WEIGHTED PROBABILITY CALCULATION
+
+          Combine the evidence using the following fixed weights:
+
+          Technical Analysis = 60%
+          Live Market Sentiment / News / Macro Context = 40%
+
+          The final UP and DOWN probabilities MUST be numeric values between 0 and 100 and add up to exactly 100.
+
+          The probabilities represent an analytical estimate, not certainty.
+
+          4. OUTPUT FORMAT
+
+          Return ONLY valid JSON.
+
+          Use EXACTLY this structure:
+
+          {
+            "up_probability_percent": 0,
+            "down_probability_percent": 0,
+            "technical_pattern": "Name of pattern",
+            "market_sentiment": "Bullish / Bearish / Neutral based on live context",
+            "summary_reason": "1-2 lines explaining how book rules and live market data led to this percentage."
+          }
+
+          STRICT OUTPUT RULES:
+
+          - Return ONLY the JSON object.
+          - Do not include Markdown.
+          - Do not include introductory text.
+          - Do not include explanations outside the JSON object.
+          - Do not include additional JSON fields.
+          - "up_probability_percent" and "down_probability_percent" MUST be numeric and MUST sum to exactly 100.
+          - "technical_pattern" must contain only a pattern supported by visible chart evidence.
+          - If no reliable classical pattern is visible, use "No clear classical pattern".
+          - "market_sentiment" MUST be exactly one of: "Bullish", "Bearish", "Neutral".
+          - If reliable live market context is unavailable, use "Neutral" rather than inventing a sentiment.
+          - "summary_reason" must be concise and limited to 1-2 lines.
+          - The final probabilities must reflect the combined 60% technical-analysis and 40% live-market-context methodology.
+          - Never fabricate information.
+          """
+              }
+
+              private lateinit var wm: WindowManager
+              private val handler = Handler(Looper.getMainLooper())
+
+              private var button: TextView? = null
+              private var projection: MediaProjection? = null
+              private var reader: ImageReader? = null
+              private var display: VirtualDisplay? = null
+
+              private var w = 0
+              private var h = 0
+              private var armed = false
+              private var waiting = false
+              private var token = 0
+
+              override fun onBind(intent: Intent?): IBinder? = null
+
+              override fun onCreate() {
+                  super.onCreate()
+                  wm = getSystemService(WINDOW_SERVICE) as WindowManager
+              }
+
+              override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+                  startAsForeground()
+
+                  val code = intent?.getIntExtra("code", Int.MIN_VALUE) ?: Int.MIN_VALUE
+                  val data: Intent? = if (Build.VERSION.SDK_INT >= 33) {
+                      intent?.getParcelableExtra("data", Intent::class.java)
+                  } else {
+                      @Suppress("DEPRECATION")
+                      intent?.getParcelableExtra("data")
+                  }
+
+                  if (data == null || code == Int.MIN_VALUE) {
+                      toast("Capture permission পাওয়া যায়নি")
+                      stopSelf()
+                      return START_NOT_STICKY
+                  }
+
+                  if (projection == null) {
+                      try {
+                          setupProjection(code, data)
+                      } catch (e: Exception) {
+                          toast("Capture শুরু হয়নি: " + (e.message ?: ""))
+                          stopSelf()
+                          return START_NOT_STICKY
+                      }
+                  }
+
+                  showButton()
+                  return START_NOT_STICKY
+              }
+
+              private fun startAsForeground() {
+                  val channelId = "gasi_overlay"
+                  val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+                  nm.createNotificationChannel(
+                      NotificationChannel(channelId, "Floating G", NotificationManager.IMPORTANCE_LOW)
+                  )
+                  val n = Notification.Builder(this, channelId)
+                      .setSmallIcon(android.R.drawable.ic_menu_camera)
+                      .setContentTitle("gasi candle analysis AI")
+                      .setContentText("Floating G চালু আছে")
+                      .setOngoing(true)
+                      .build()
+
+                  if (Build.VERSION.SDK_INT >= 29) {
+                      startForeground(1001, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
+                  } else {
+                      startForeground(1001, n)
+                  }
+              }
+
+              private fun setupProjection(code: Int, data: Intent) {
+                  val mpm = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+                  val p = mpm.getMediaProjection(code, data)
+
+                  p.registerCallback(object : MediaProjection.Callback() {
+                      override fun onStop() {
+                          handler.post { stopSelf() }
+                      }
+                  }, handler)
+                  projection = p
+
+                  val m = resources.displayMetrics
+                  if (Build.VERSION.SDK_INT >= 30) {
+                      val b = wm.maximumWindowMetrics.bounds
+                      w = b.width()
+                      h = b.height()
+                  } else {
+                      w = m.widthPixels
+                      h = m.heightPixels
+                  }
+
+                  val r = ImageReader.newInstance(w, h, PixelFormat.RGBA_8888, 2)
+                  r.setOnImageAvailableListener({ rd ->
+                      val img = rd.acquireLatestImage()
+                      if (img != null) {
+                          if (armed) {
+                              armed = false
+                              try {
+                                  handleImage(img)
+                              } finally {
+                                  img.close()
+                              }
+                          } else {
+                              img.close()
+                          }
+                      }
+                  }, handler)
+                  reader = r
+
+                  display = p.createVirtualDisplay(
+                      "gasi", w, h, m.densityDpi,
+                      DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                      r.surface, null, handlerprivate fun capture() {
+                  if (waiting) return
+                  waiting = true
+                  val my = ++token
+                  button?.visibility = View.INVISIBLE
+
+                  handler.postDelayed({
+                      if (my == token && waiting) armed = true
+                  }, 250)
+
+                  handler.postDelayed({
+                      if (my == token && waiting) {
+                          armed = false
+                          waiting = false
+                          button?.visibility = View.VISIBLE
+                          toast("Screenshot নেওয়া যায়নি, আবার চাপুন")
+                      }
+                  }, 2500)
+              }
+
+              private fun handleImage(image: Image) {
+                  var shareFile: File? = null
+                  try {
+                      val plane = image.planes[0]
+                      val pixelStride = plane.pixelStride
+                      val rowStride = plane.rowStride
+                      val rowPadding = rowStride - pixelStride * w
+
+                      val full = Bitmap.createBitmap(
+                          w + rowPadding / pixelStride, h, Bitmap.Config.ARGB_8888
+                      )
+                      full.copyPixelsFromBuffer(plane.buffer)
+                      val bmp = Bitmap.createBitmap(full, 0, 0, w, h)
+                      if (bmp !== full) full.recycle()
+
+                      val dir = File(cacheDir, "captures")
+                      dir.mkdirs()
+                      dir.listFiles()?.forEach { it.delete() }
+                      val file = File(dir, "chart_" + System.currentTimeMillis() + ".png")
+                      FileOutputStream(file).use { out ->
+                          bmp.compress(Bitmap.CompressFormat.PNG, 100, out)
+                      }
+                      bmp.recycle()
+                      shareFile = file
+                  } catch (e: Exception) {
+                      toast("Screenshot error: " + (e.message ?: ""))
+                  } finally {
+                      waiting = false
+                      button?.visibility = View.VISIBLE
+                  }
+
+                  shareFile?.let { share(it) }
+              }
+
+              private fun share(file: File) {
+                  try {
+                      val uri = FileProvider.getUriForFile(
+                          this, packageName + ".fileprovider", file
+                      )
+                      val send = Intent(Intent.ACTION_SEND)
+                      send.type = "image/png"
+                      send.putExtra(Intent.EXTRA_STREAM, uri)
+                      send.putExtra(Intent.EXTRA_TEXT, PROMPT.trimIndent())
+                      send.clipData = ClipData.newRawUri("chart", uri)
+                      send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+
+                      val chooser = Intent.createChooser(send, "AI app বেছে নিন")
+                      chooser.addFlags(
+                          Intent.FLAG_ACTIVITY_NEW_TASK or
+                              Intent.FLAG_GRANT_READ_URI_PERMISSION
+                      )
+                      startActivity(chooser)
+                  } catch (e: Exception) {
+                      toast("Share করা যায়নি: " + (e.message ?: ""))
+                  }
+              }
+
+              private fun showButton() {
+                  if (button != null) return
+                  val size = (58 * resources.displayMetrics.density).toInt()
+
+                  val bg = GradientDrawable()
+                  bg.shape = GradientDrawable.OVAL
+                  bg.setColor(Color.rgb(139, 92, 246))
+
+                  val tv = TextView(this)
+                  tv.text = "G"
+                  tv.textSize = 22f
+                  tv.setTextColor(Color.WHITE)
+                  tv.gravity = Gravity.CENTER
+                  tv.background = bg
+
+                  val lp = WindowManager.LayoutParams(
+                      size, size,
+                      WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                      WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+                      PixelFormat.TRANSLUCENT
+                  )
+                  lp.gravity = Gravity.TOP or Gravity.START
+                  lp.x = 30
+                  lp.y = 300
+
+                  var startX = 0
+                  var startY = 0
+                  var touchX = 0f
+                  var touchY = 0f
+
+                  tv.setOnTouchListener { v, e ->
+                      when (e.actionMasked) {
+                          MotionEvent.ACTION_DOWN -> {
+                              startX = lp.x
+                              startY = lp.y
+                              touchX = e.rawX
+                              touchY = e.rawY
+                              true
+                          }
+                          MotionEvent.ACTION_MOVE -> {
+                              lp.x = startX + (e.rawX - touchX).toInt()
+                              lp.y = startY + (e.rawY - touchY).toInt()
+                              wm.updateViewLayout(v, lp)
+                              true
+                          }
+                          MotionEvent.ACTION_UP -> {
+                              if (abs(e.rawX - touchX) < 15 && abs(e.rawY - touchY) < 15) {
+                                  capture()
+                              }
+                              true
+                          }
+                          else -> false
+                      }
+                  }
+
+                  wm.addView(tv, lp)
+                  button = tv
+              }
+
+              private fun toast(msg: String) {
+                  handler.post {
+                      Toast.makeText(applicationContext, msg, Toast.LENGTH_SHORT).show()
+                  }
+              }
+
+              override fun onDestroy() {
+                  button?.let {
+                      try {
+                          wm.removeView(it)
+                      } catch (_: Exception) {
+                      }
+                  }
+                  button = null
+                  try { display?.release() } catch (_: Exception) {}
+                  try { reader?.close() } catch (_: Exception) {}
+                  try { projection?.stop() } catch (_: Exception) {}
+                  display = null
+                  reader = null
+                  projection = null
+                  super.onDestroy()
+              }
+          }
+          EOF
+                  )
+              }- run: flutter pub get
+
+      - run: flutter analyze --no-fatal-infos
+
+      - run: flutter build apk --release
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gasi-candle-analysis-ai
+          path: build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
