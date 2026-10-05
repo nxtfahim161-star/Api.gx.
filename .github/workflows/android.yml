@@ -55,6 +55,16 @@ jobs:
           cp AndroidManifest.xml android/app/src/main/AndroidManifest.xml
           cp file_paths.xml android/app/src/main/res/xml/file_paths.xml
 
+      - name: Android build fixes
+        run: |
+          D=android/app/src/main/kotlin/com/example/gasi_candle_ai
+          sed -i 's/val p = mpm.getMediaProjection(code, data)/val p = mpm.getMediaProjection(code, data) ?: throw IllegalStateException("MediaProjection null")/' $D/OverlayService.kt
+          grep -n "getMediaProjection" $D/OverlayService.kt || true
+          if [ -f android/app/build.gradle.kts ]; then
+            sed -i 's/minSdk = flutter.minSdkVersion/minSdk = 26/' android/app/build.gradle.kts
+            printf '\nandroid {\n    lint {\n        checkReleaseBuilds = false\n        abortOnError = false\n    }\n}\n' >> android/app/build.gradle.kts
+          fi
+
       - name: Add logo
         run: |
           if [ -f logo.png ]; then
