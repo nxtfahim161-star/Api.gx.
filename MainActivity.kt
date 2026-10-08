@@ -1,5 +1,6 @@
 package com.example.gasi_candle_ai
 
+import android.app.AlertDialog
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.projection.MediaProjectionManager
@@ -8,6 +9,8 @@ import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
+import android.widget.EditText
+import android.widget.FrameLayout
 import androidx.core.content.ContextCompat
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -16,6 +19,46 @@ import io.flutter.plugin.common.MethodChannel
 class MainActivity : FlutterActivity() {
 
     private var pending: MethodChannel.Result? = null
+    private var keyDialog: AlertDialog? = null
+    private var askedOnce = false
+
+    private fun hasKey(): Boolean =
+        !(getSharedPreferences("gasi", MODE_PRIVATE).getString("key", "") ?: "").isEmpty()
+
+    // API key না থাকলে অ্যাপ খুললেই key বসানোর বক্স আসবে
+    private fun showKeyDialog() {
+        if (keyDialog?.isShowing == true) return
+        val dm = resources.displayMetrics.density
+        val input = EditText(this)
+        input.hint = "AIza..."
+        input.setSingleLine()
+        val pad = (20 * dm).toInt()
+        val box = FrameLayout(this)
+        box.setPadding(pad, pad / 2, pad, 0)
+        box.addView(input)
+        keyDialog = AlertDialog.Builder(this)
+            .setTitle("Gemini API key দিন")
+            .setMessage("aistudio.google.com/apikey থেকে key কপি করে এখানে বসান। key শুধু এই ফোনে থাকবে।")
+            .setView(box)
+            .setPositiveButton("সেভ") { _, _ ->
+                val k = input.text.toString().trim()
+                if (k.isNotEmpty()) {
+                    getSharedPreferences("gasi", MODE_PRIVATE)
+                        .edit().putString("key", k).apply()
+                }
+            }
+            .setNegativeButton("পরে", null)
+            .create()
+        keyDialog?.show()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (!askedOnce && !hasKey()) {
+            askedOnce = true
+            showKeyDialog()
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -56,6 +99,11 @@ class MainActivity : FlutterActivity() {
                     val k = getSharedPreferences("gasi", MODE_PRIVATE)
                         .getString("key", "") ?: ""
                     result.success(k.isNotEmpty())
+                }
+
+                "askApiKey" -> {
+                    showKeyDialog()
+                    result.success(null)
                 }
 
                 "saveApiKey" -> {
