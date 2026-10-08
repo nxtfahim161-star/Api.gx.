@@ -129,9 +129,18 @@ private val C_RED = Color.rgb(255, 102, 133)
 private val C_AMBER = Color.rgb(255, 180, 92)
 private val C_LILAC = Color.rgb(192, 132, 252)
 
-class GaugeView(context: Context, private val up: Float) : View(context) {
+private fun fmtPct(v: Float): String =
+    if (v % 1f == 0f) v.toInt().toString() else String.format("%.1f", v)
+
+/** ছবির মতো গেজ: বামে সবুজ, ডানে লাল, ধূসর কাঁটা, কালো UP/down লেবেল, গোলাপি % পিল। */
+class GaugeView(
+    context: Context,
+    private val up: Float,
+    private val down: Float
+) : View(context) {
 
     private val d = resources.displayMetrics.density
+    private val pink = Color.rgb(252, 190, 212)
 
     private val arc = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
@@ -140,67 +149,122 @@ class GaugeView(context: Context, private val up: Float) : View(context) {
     private val needle = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeCap = Paint.Cap.ROUND
-        color = Color.WHITE
+        color = Color.rgb(205, 205, 205)
     }
     private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
-    private val label = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    private val txt = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         textAlign = Paint.Align.CENTER
         typeface = Typeface.DEFAULT_BOLD
-        textSize = 13 * d
+        strokeJoin = Paint.Join.ROUND
     }
+
+    private fun radiusFor(width: Int) = width * 0.38f
+    private fun strokeFor() = 26 * d
 
     override fun onMeasure(w: Int, h: Int) {
         val width = MeasureSpec.getSize(w)
-        setMeasuredDimension(width, (width / 2f + 40 * d).toInt())
+        val r = radiusFor(width)
+        val cy = r + strokeFor() / 2 + 40 * d
+        val height = cy + 0.5f * r + strokeFor() / 2 + 52 * d
+        setMeasuredDimension(width, height.toInt())
+    }
+
+    private fun pill(
+        canvas: Canvas, text: String, left: Float, top: Float,
+        bg: Int, size: Float, outlined: Boolean
+    ) {
+        txt.textSize = size
+        val tw = txt.measureText(text)
+        val padH = 12 * d
+        val ph = size + 14 * d
+        val rect = RectF(left, top, left + tw + padH * 2, top + ph)
+        fill.color = bg
+        canvas.drawRoundRect(rect, 12 * d, 12 * d, fill)
+        val bx = rect.centerX()
+        val by = rect.centerY() + size * 0.35f
+        if (outlined) {
+            txt.style = Paint.Style.STROKE
+            txt.strokeWidth = 4 * d
+            txt.color = Color.BLACK
+            canvas.drawText(text, bx, by, txt)
+        }
+        txt.style = Paint.Style.FILL
+        txt.color = Color.WHITE
+        canvas.drawText(text, bx, by, txt)
+    }
+
+    private fun pillWidth(text: String, size: Float): Float {
+        txt.textSize = size
+        return txt.measureText(text) + 24 * d
     }
 
     override fun onDraw(canvas: Canvas) {
-        val stroke = 22 * d
-        val pad = stroke / 2 + 14 * d
+        val stroke = strokeFor()
+        val r = radiusFor(width)
         val cx = width / 2f
-        val radius = width / 2f - pad
-        val cy = radius + pad
-        val rect = RectF(cx - radius, cy - radius, cx + radius, cy + radius)
+        val cy = r + stroke / 2 + 40 * d
+        val rect = RectF(cx - r, cy - r, cx + r, cy + r)
+
+        val start = 150f
+        val total = 240f
+        val upSweep = total * up / 100f
+        val downSweep = total - upSweep
+        val gap = 2.5f
 
         arc.strokeWidth = stroke
-
         arc.color = Color.argb(30, 255, 255, 255)
-        canvas.drawArc(rect, 180f, 180f, false, arc)
-
-        val gap = 2.5f
-        val upSweep = 180f * up / 100f
-        val downSweep = 180f - upSweep
+        canvas.drawArc(rect, start, total, false, arc)
 
         if (upSweep > gap) {
             arc.color = C_GREEN
             val end = if (downSweep > gap) gap / 2 else 0f
-            canvas.drawArc(rect, 180f, upSweep - end, false, arc)
+            canvas.drawArc(rect, start, upSweep - end, false, arc)
         }
         if (downSweep > gap) {
             arc.color = C_RED
-            val start = if (upSweep > gap) gap / 2 else 0f
-            canvas.drawArc(rect, 180f + upSweep + start, downSweep - start, false, arc)
+            val s = if (upSweep > gap) gap / 2 else 0f
+            canvas.drawArc(rect, start + upSweep + s, downSweep - s, false, arc)
         }
 
-        val angle = Math.toRadians((180f + upSweep).toDouble())
-        val len = radius - stroke * 0.9f
-        needle.strokeWidth = 4 * d
+        // কাঁটা
+        val angle = Math.toRadians((start + upSweep).toDouble())
+        val len = r * 0.62f
+        needle.strokeWidth = 11 * d
         canvas.drawLine(
             cx, cy,
             cx + (len * cos(angle)).toFloat(),
             cy + (len * sin(angle)).toFloat(),
             needle
         )
-        fill.color = Color.WHITE
-        canvas.drawCircle(cx, cy, 9 * d, fill)
-        fill.color = Color.rgb(16, 13, 20)
-        canvas.drawCircle(cx, cy, 4 * d, fill)
+        fill.color = Color.rgb(205, 205, 205)
+        canvas.drawCircle(cx, cy, 8 * d, fill)
 
-        val ly = cy + 26 * d
-        label.color = C_GREEN
-        canvas.drawText("UP", cx - radius, ly, label)
-        label.color = C_RED
-        canvas.drawText("DOWN", cx + radius, ly, label)
+        // মাঝের বড় সংখ্যা
+        val isUp = up > down
+        val big = if (up == down) "50%" else fmtPct(if (isUp) up else down) + "%"
+        val caption = if (up == down) "সমান" else if (isUp) "UP" else "DOWN"
+        txt.style = Paint.Style.FILL
+        txt.textSize = 30 * d
+        txt.color = Color.WHITE
+        canvas.drawText(big, cx, cy + r * 0.42f + 12 * d, txt)
+        txt.textSize = 13 * d
+        txt.color = if (up == down) C_AMBER else if (isUp) C_GREEN else C_RED
+        canvas.drawText(caption, cx, cy + r * 0.42f + 32 * d, txt)
+
+        // কালো লেবেল: UP (বামে), down (ডানে)
+        val ls = 20 * d
+        pill(canvas, "UP", 4 * d, 4 * d, Color.BLACK, ls, false)
+        val dw = pillWidth("down", ls)
+        pill(canvas, "down", width - dw - 4 * d, 4 * d, Color.BLACK, ls, false)
+
+        // গোলাপি পিল: Up:30% / down:70%
+        val ps = 17 * d
+        val upT = "Up:" + fmtPct(up) + "%"
+        val dnT = "down:" + fmtPct(down) + "%"
+        val py = height - (ps + 14 * d) - 4 * d
+        pill(canvas, upT, 4 * d, py, pink, ps, true)
+        val dnW = pillWidth(dnT, ps)
+        pill(canvas, dnT, width - dnW - 4 * d, py, pink, ps, true)
     }
 }
 
@@ -274,37 +338,9 @@ object ResultCard {
         root.addView(header)
 
         root.addView(
-            GaugeView(c, up.toFloat()),
+            GaugeView(c, up.toFloat(), down.toFloat()),
             LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(c, 6) }
         )
-
-        val isUp = up > down
-        val isTie = up == down
-        val verdictColor = when {
-            isTie -> C_AMBER
-            isUp -> C_GREEN
-            else -> C_RED
-        }
-        val verdictText = when {
-            isTie -> "সমান সম্ভাবনা"
-            isUp -> "UP  ${pct(up)}%"
-            else -> "DOWN  ${pct(down)}%"
-        }
-        root.addView(
-            text(c, verdictText, 30f, verdictColor, bold = true, center = true),
-            LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(c, 2) }
-        )
-
-        val row = LinearLayout(c).apply { orientation = LinearLayout.HORIZONTAL }
-        val upPill = text(c, "Up: ${pct(up)}%", 15f, C_GREEN, bold = true, center = true)
-        upPill.setPadding(0, dp(c, 8), 0, dp(c, 8))
-        upPill.background = pill(c, C_GREEN, 36)
-        val downPill = text(c, "Down: ${pct(down)}%", 15f, C_RED, bold = true, center = true)
-        downPill.setPadding(0, dp(c, 8), 0, dp(c, 8))
-        downPill.background = pill(c, C_RED, 36)
-        row.addView(upPill, LinearLayout.LayoutParams(0, -2, 1f).apply { marginEnd = dp(c, 6) })
-        row.addView(downPill, LinearLayout.LayoutParams(0, -2, 1f).apply { marginStart = dp(c, 6) })
-        root.addView(row, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(c, 14) })
 
         val sentColor = when (sentiment) {
             "Bullish" -> C_GREEN
