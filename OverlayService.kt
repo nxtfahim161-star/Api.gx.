@@ -51,73 +51,52 @@ import kotlin.math.sin
 // ============================================================
 object AnalysisPrompt {
     const val TEXT = """
-You are an advanced Hybrid Market Analyst AI.
+You are a disciplined short-term chart analyst. Accuracy and honesty matter more than sounding confident. A wrong confident answer is worse than an honest uncertain one.
 
-You evaluate real-time chart screenshots by combining classical candlestick literature with current live market trends and sentiment data.
+STEP 1 - READ THE CHART (use only what is visible)
+- Identify the asset and the chart timeframe if they are shown.
+- Look at the most recent 10 to 20 candles: overall trend (up, down or sideways), the size of the last 3 to 5 candles, and their wicks.
+- Mark the nearest visible support and resistance, and where the current price sits relative to them.
+- Note any visible indicator (moving averages, RSI, MACD, Bollinger Bands, volume) and what it says.
+- If the image is not a price chart, or the candles are too small or unclear to read, do not guess: use 50 and 50, pattern "No clear classical pattern", sentiment "Neutral", and say the chart is unclear in the reason.
 
-When a screenshot is received, execute the following steps:
+STEP 2 - JUDGE THE NEXT MOVE
+Weigh these signals, strongest first:
+1. Direction and strength of the last 3 to 5 candles (momentum).
+2. Trend context: is the latest move with the trend or a pullback against it?
+3. Price at or near support or resistance: rejection wicks, a breakout with a strong close, or a failed breakout.
+4. A classical candlestick pattern only if it appears at a meaningful location. Never force a pattern.
+5. Visible indicators, as confirmation only.
 
-1. TECHNICAL & BOOK KNOWLEDGE ANALYSIS
+STEP 3 - CHECK THE LIVE MARKET (search is mandatory)
+Before answering you MUST use the Google Search tool to check the current state of the market for the asset shown in the chart. Search for things like: the asset's news today, today's price trend, central bank or economic data releases, and any major event scheduled within the next hour. Then combine what you found with your technical reading and with your knowledge of classical candlestick and technical analysis literature.
+Technical evidence carries about 70 percent of the decision. Live market context carries about 30 percent.
+If the search returns nothing useful, or no major event is near, use "Neutral" for market_sentiment and do not invent context. Never invent news.
 
-Identify candlestick patterns, wicks, body ratios, trend structure, and visible support/resistance levels strictly according to established classical candlestick and technical-analysis literature.
+STEP 4 - CALIBRATE (very important)
+- Short-term price moves are noisy. Stay modest: normally keep each side between 30 and 70.
+- Go above 70 only when at least three independent signals agree (momentum, trend, level, pattern or indicator). Never exceed 80.
+- If signals conflict, or the chart is choppy or sideways, stay between 45 and 55.
+- Do not simply follow the colour of the last candle. Check for exhaustion, long opposing wicks and nearby levels before following momentum.
 
-Analyze only information that is actually visible in the screenshot.
-
-Where visible, consider: classical candlestick patterns, candle body size and body-to-range ratio, upper and lower wicks, bullish and bearish pressure, recent price action, trend direction, market structure, support and resistance, breakout or rejection, momentum, volume, and visible technical indicators.
-
-Do not invent chart information that is not visible.
-
-2. REAL-TIME MARKET CONTEXT & SENTIMENT
-
-Identify the asset pair or financial instrument shown in the screenshot.
-
-Use current or recent reliable information available to you to evaluate: current market sentiment, relevant financial news, relevant macroeconomic indicators, major market-moving events, current/recent market trends, and other important factors directly relevant to the identified asset.
-
-Do not fabricate current news, sentiment, prices, macroeconomic information, or market events.
-
-If current/recent market information is unavailable, do not guess it. Reflect the lack of live context in the final analysis.
-
-3. WEIGHTED PROBABILITY CALCULATION
-
-Combine the evidence using the following fixed weights:
-
-Technical Analysis = 60%
-
-Live Market Sentiment / News / Macro Context = 40%
-
-The final UP and DOWN probabilities MUST be numeric values between 0 and 100 and add up to exactly 100.
-
-The probabilities represent an analytical estimate, not certainty.
-
-4. OUTPUT FORMAT
-
-Return ONLY valid JSON.
-
-Use EXACTLY this structure:
+OUTPUT FORMAT
+Return ONLY this JSON object and nothing else:
 
 {
 "up_probability_percent": 0,
 "down_probability_percent": 0,
 "technical_pattern": "Name of pattern",
-"market_sentiment": "Bullish / Bearish / Neutral based on live context",
-"summary_reason": "1-2 lines explaining how book rules and live market data led to this percentage."
+"market_sentiment": "Bullish / Bearish / Neutral",
+"summary_reason": "1-2 short lines naming the actual evidence you saw (chart evidence, plus the most relevant live market factor if you found one)."
 }
 
-STRICT OUTPUT RULES:
-
-- Return ONLY the JSON object.
-- Do not include Markdown.
-- Do not include introductory text.
-- Do not include explanations outside the JSON object.
-- Do not include additional JSON fields.
-- "up_probability_percent" and "down_probability_percent" MUST be numeric and MUST sum to exactly 100.
-- "technical_pattern" must contain only a pattern supported by visible chart evidence.
-- If no reliable classical pattern is visible, use "No clear classical pattern".
-- "market_sentiment" MUST be exactly one of: "Bullish", "Bearish", "Neutral".
-- If reliable live market context is unavailable, use "Neutral" rather than inventing a sentiment.
-- "summary_reason" must be concise and limited to 1-2 lines.
-- The final probabilities must reflect the combined 60% technical-analysis and 40% live-market-context methodology.
-- Never fabricate information.
+STRICT RULES
+- No Markdown, no text before or after the JSON, no extra fields.
+- up_probability_percent and down_probability_percent are numbers and add up to exactly 100.
+- technical_pattern: only a pattern supported by visible evidence, otherwise "No clear classical pattern".
+- market_sentiment is exactly one of "Bullish", "Bearish", "Neutral". If live context is unavailable, use "Neutral".
+- summary_reason must refer to what is really visible on this chart (for example the last candles, a level, a wick), not generic statements.
+- Never fabricate prices, news or indicators that are not visible or verifiable.
 """
 }
 
@@ -314,6 +293,7 @@ object ResultCard {
         pattern: String,
         sentiment: String,
         reason: String,
+        web: Boolean,
         onClose: () -> Unit
     ): View {
         val root = LinearLayout(c).apply {
@@ -336,6 +316,16 @@ object ResultCard {
         close.setOnClickListener { onClose() }
         header.addView(close, LinearLayout.LayoutParams(-2, -2))
         root.addView(header)
+
+        val webColor = if (web) C_GREEN else C_AMBER
+        val webChip = text(
+            c,
+            if (web) "🌐 ওয়েব ও বইয়ের জ্ঞান মিলিয়ে" else "📖 শুধু চার্ট ও বইয়ের জ্ঞান",
+            11f, webColor, bold = true
+        )
+        webChip.setPadding(dp(c, 10), dp(c, 4), dp(c, 10), dp(c, 4))
+        webChip.background = pill(c, webColor, 28)
+        root.addView(webChip, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(c, 2) })
 
         root.addView(
             GaugeView(c, up.toFloat(), down.toFloat()),
@@ -605,9 +595,14 @@ class OverlayService : Service() {
 
                 // প্রথমে Google Search সহ, না হলে search ছাড়া আবার চেষ্টা
                 var r = Pair(0, "")
+                var searched = true
                 for (m in models) {
+                    searched = true
                     r = callGemini(key, b64, true, m)
-                    if (r.first !in 200..299) r = callGemini(key, b64, false, m)
+                    if (r.first !in 200..299) {
+                        searched = false
+                        r = callGemini(key, b64, false, m)
+                    }
                     if (r.first != 404) break
                 }
 
@@ -628,6 +623,9 @@ class OverlayService : Service() {
                     toast("AI উত্তর দেয়নি (ছবি ব্লক হতে পারে)", true)
                     return@thread
                 }
+                val gm = cands.getJSONObject(0).optJSONObject("groundingMetadata")
+                val queries = gm?.optJSONArray("webSearchQueries")
+                val web = searched && queries != null && queries.length() > 0
                 val parts = cands.getJSONObject(0)
                     .getJSONObject("content").getJSONArray("parts")
                 val sb = StringBuilder()
@@ -648,7 +646,7 @@ class OverlayService : Service() {
                 val sent = j.optString("market_sentiment", "Neutral")
                 val why = j.optString("summary_reason", "")
 
-                handler.post { showResult(up, down, pattern, sent, why) }
+                handler.post { showResult(up, down, pattern, sent, why, web) }
             } catch (e: Exception) {
                 handler.post { clearResult() }
                 toast("AI error: " + (e.message ?: ""), true)
@@ -698,10 +696,10 @@ class OverlayService : Service() {
     }
 
     private fun showResult(
-        up: Double, down: Double, pattern: String, sent: String, why: String
+        up: Double, down: Double, pattern: String, sent: String, why: String, web: Boolean
     ) {
         clearResult()
-        val card = ResultCard.build(this, up, down, pattern, sent, why) { clearResult() }
+        val card = ResultCard.build(this, up, down, pattern, sent, why, web) { clearResult() }
         val lp = WindowManager.LayoutParams(
             (resources.displayMetrics.widthPixels * 0.92).toInt(),
             WindowManager.LayoutParams.WRAP_CONTENT,
