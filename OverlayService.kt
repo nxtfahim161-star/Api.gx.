@@ -389,7 +389,8 @@ class OverlayService : Service() {
     private var waiting = false
     private var token = 0
 
-    private val model = "gemini-2.5-flash"
+    // 404 এলে পরের মডেল চেষ্টা করবে
+    private val models = listOf("gemini-flash-latest", "gemini-3.5-flash", "gemini-3-flash-preview")
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -547,6 +548,40 @@ class OverlayService : Service() {
     }
 
     // ---------- AI call (Gemini) ----------
+    private fun callGemini(key: String, b64: String, withSearch: Boolean, m: String): Pair<Int, String> {
+        val parts = JSONArray()
+            .put(JSONObject().put("text", AnalysisPrompt.TEXT.trimIndent()))
+            .put(
+                JSONObject().put(
+                    "inline_data", JSONObject()
+                        .put("mime_type", "image/jpeg")
+                        .put("data", b64)
+                )
+            )
+        val body = JSONObject()
+            .put("contents", JSONArray().put(JSONObject().put("parts", parts)))
+        if (withSearch) {
+            body.put(
+                "tools", JSONArray().put(JSONObject().put("google_search", JSONObject()))
+            )
+        }
+        val c = URL(
+            "https://generativelanguage.googleapis.com/v1beta/models/$m:generateContent"
+        ).openConnection() as HttpURLConnection
+        c.requestMethod = "POST"
+        c.connectTimeout = 20000
+        c.readTimeout = 90000
+        c.doOutput = true
+        c.setRequestProperty("Content-Type", "application/json")
+        c.setRequestProperty("x-goog-api-key", key)
+        c.outputStream.use { it.write(body.toString().toByteArray()) }
+        val code = c.responseCode
+        val ok = code in 200..299
+        val text = (if (ok) c.inputStream else c.errorStream)
+            ?.bufferedReader()?.readText() ?: ""
+        return Pair(code, text)
+    }
+
     private fun analyze(file: File) {
         val key = getSharedPreferences("gasi", MODE_PRIVATE)
             .getString("key", "") ?: ""
@@ -561,50 +596,34 @@ class OverlayService : Service() {
         thread {
             try {
                 val b64 = Base64.encodeToString(file.readBytes(), Base64.NO_WRAP)
-                val body = JSONObject()
-                    .put(
-                        "contents", JSONArray().put(
-                            JSONObject().put(
-                                "parts", JSONArray()
-                                    .put(JSONObject().put("text", AnalysisPrompt.TEXT.trimIndent()))
-                                    .put(
-                                        JSONObject().put(
-                                            "inline_data", JSONObject()
-                                                .put("mime_type", "image/jpeg")
-                                                .put("data", b64)
-                                        )
-                                    )
-                            )
-                        )
-                    )
-                    .put(
-                        "tools", JSONArray().put(
-                            JSONObject().put("google_search", JSONObject())
-                        )
-                    )
 
-                val c = URL(
-                    "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent"
-                ).openConnection() as HttpURLConnection
-                c.requestMethod = "POST"
-                c.connectTimeout = 20000
-                c.readTimeout = 90000
-                c.doOutput = true
-                c.setRequestProperty("Content-Type", "application/json")
-                c.setRequestProperty("x-goog-api-key", key)
-                c.outputStream.use { it.write(body.toString().toByteArray()) }
+                // প্রথমে Google Search সহ, না হলে search ছাড়া আবার চেষ্টা
+                var r = Pair(0, "")
+                for (m in models) {
+                    r = callGemini(key, b64, true, m)
+                    if (r.first !in 200..299) r = callGemini(key, b64, false, m)
+                    if (r.first != 404) break
+                }
 
-                val ok = c.responseCode in 200..299
-                val resp = (if (ok) c.inputStream else c.errorStream)
-                    .bufferedReader().readText()
-                if (!ok) {
+                if (r.first !in 200..299) {
+                    var m = ""
+                    try {
+                        m = JSONObject(r.second).getJSONObject("error").getString("message")
+                    } catch (_: Exception) {
+                    }
                     handler.post { clearResult() }
-                    toast("API error " + c.responseCode)
+                    toast("API " + r.first + ": " + m.take(160), true)
                     return@thread
                 }
 
-                val parts = JSONObject(resp).getJSONArray("candidates")
-                    .getJSONObject(0).getJSONObject("content").getJSONArray("parts")
+                val cands = JSONObject(r.second).optJSONArray("candidates")
+                if (cands == null || cands.length() == 0) {
+                    handler.post { clearResult() }
+                    toast("AI উত্তর দেয়নি (ছবি ব্লক হতে পারে)", true)
+                    return@thread
+                }
+                val parts = cands.getJSONObject(0)
+                    .getJSONObject("content").getJSONArray("parts")
                 val sb = StringBuilder()
                 for (i in 0 until parts.length()) {
                     sb.append(parts.getJSONObject(i).optString("text"))
@@ -626,7 +645,7 @@ class OverlayService : Service() {
                 handler.post { showResult(up, down, pattern, sent, why) }
             } catch (e: Exception) {
                 handler.post { clearResult() }
-                toast("AI error: " + (e.message ?: ""))
+                toast("AI error: " + (e.message ?: ""), true)
             }
         }
     }
@@ -760,9 +779,12 @@ class OverlayService : Service() {
         button = tv
     }
 
-    private fun toast(msg: String) {
+    private fun toast(msg: String, long: Boolean = false) {
         handler.post {
-            Toast.makeText(applicationContext, msg, Toast.LENGTH_SHORT).show()
+            Toast.makeText(
+                applicationContext, msg,
+                if (long) Toast.LENGTH_LONG else Toast.LENGTH_SHORT
+            ).show()
         }
     }
 
