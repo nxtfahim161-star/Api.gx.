@@ -101,6 +101,18 @@ class MainActivity : FlutterActivity() {
                     result.success(k.isNotEmpty())
                 }
 
+                "getMinutes" -> {
+                    val m = getSharedPreferences("gasi", MODE_PRIVATE).getInt("minutes", 5)
+                    result.success(m)
+                }
+
+                "saveMinutes" -> {
+                    val m = call.argument<Int>("minutes") ?: 5
+                    getSharedPreferences("gasi", MODE_PRIVATE)
+                        .edit().putInt("minutes", m).apply()
+                    result.success(null)
+                }
+
                 "askApiKey" -> {
                     showKeyDialog()
                     result.success(null)
