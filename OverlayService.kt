@@ -596,14 +596,24 @@ class OverlayService : Service() {
                 // প্রথমে Google Search সহ, না হলে search ছাড়া আবার চেষ্টা
                 var r = Pair(0, "")
                 var searched = true
-                for (m in models) {
-                    searched = true
-                    r = callGemini(key, b64, true, m)
-                    if (r.first !in 200..299) {
-                        searched = false
-                        r = callGemini(key, b64, false, m)
+                // 429/500/503/504 = Google সার্ভার ব্যস্ত; একটু অপেক্ষা করে আবার, তারপর পরের মডেল
+                val retryable = setOf(429, 500, 503, 504)
+                outer@ for (m in models) {
+                    for (attempt in 0..1) {
+                        searched = true
+                        r = callGemini(key, b64, true, m)
+                        if (r.first !in 200..299) {
+                            searched = false
+                            r = callGemini(key, b64, false, m)
+                        }
+                        if (r.first in 200..299) break@outer
+                        if (r.first in retryable && attempt == 0) {
+                            Thread.sleep(2500)
+                            continue
+                        }
+                        break
                     }
-                    if (r.first != 404) break
+                    if (r.first != 404 && r.first !in retryable) break
                 }
 
                 if (r.first !in 200..299) {
