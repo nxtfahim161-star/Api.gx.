@@ -348,6 +348,7 @@ class _TimeframeCardState extends State<TimeframeCard> {
   static const _ch = MethodChannel('gasi/native');
   static const _options = [1, 5, 15];
   int _sel = 5;
+  bool _web = true;
 
   @override
   void initState() {
@@ -358,7 +359,20 @@ class _TimeframeCardState extends State<TimeframeCard> {
   Future<void> _load() async {
     try {
       final m = await _ch.invokeMethod<int>('getMinutes');
-      if (mounted && m != null) setState(() => _sel = m);
+      final w = await _ch.invokeMethod<bool>('getWeb');
+      if (mounted) {
+        setState(() {
+          if (m != null) _sel = m;
+          if (w != null) _web = w;
+        });
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _toggleWeb(bool v) async {
+    setState(() => _web = v);
+    try {
+      await _ch.invokeMethod('saveWeb', {'web': v});
     } catch (_) {}
   }
 
@@ -434,6 +448,36 @@ class _TimeframeCardState extends State<TimeframeCard> {
                     ),
                   ),
                 ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Divider(color: Colors.white.withOpacity(0.07), height: 1),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('ওয়েব সার্চ',
+                        style: TextStyle(
+                            fontSize: 14, fontWeight: FontWeight.w700)),
+                    const SizedBox(height: 2),
+                    Text(
+                      _web
+                          ? 'চালু: বেশি তথ্য, উত্তর একটু ধীরে (প্রথমবার)'
+                          : 'বন্ধ: দ্রুত উত্তর, শুধু চার্ট ও বইয়ের জ্ঞান',
+                      style: const TextStyle(
+                          fontSize: 12, color: Color(0xFF8F8993)),
+                    ),
+                  ],
+                ),
+              ),
+              Switch(
+                value: _web,
+                onChanged: _toggleWeb,
+                activeColor: AppColors.purple,
+              ),
             ],
           ),
         ],
