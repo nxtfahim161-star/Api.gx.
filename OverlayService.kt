@@ -68,10 +68,10 @@ Weigh these signals, strongest first:
 4. A classical candlestick pattern only if it appears at a meaningful location. Never force a pattern.
 5. Visible indicators, as confirmation only.
 
-STEP 3 - CHECK THE LIVE MARKET (search is mandatory)
-Before answering you MUST use the Google Search tool to check the current state of the market for the asset shown in the chart. Search for things like: the asset's news today, today's price trend, central bank or economic data releases, and any major event scheduled within the next hour. Then combine what you found with your technical reading and with your knowledge of classical candlestick and technical analysis literature.
+STEP 3 - USE THE LIVE MARKET BRIEF
+A LIVE MARKET BRIEF gathered from Google Search may be provided at the end of this message. If it is provided, use it as the live market context: the asset's news today, price trend, upcoming events and sentiment. Combine it with your technical reading and with your knowledge of classical candlestick and technical analysis literature.
 Technical evidence carries about 70 percent of the decision. Live market context carries about 30 percent.
-If the search returns nothing useful, or no major event is near, use "Neutral" for market_sentiment and do not invent context. Never invent news.
+If the brief says "unavailable" or contains nothing notable, use "Neutral" for market_sentiment. If no brief is provided at all, search the web yourself if you are able to; if you cannot, use "Neutral". Never invent news.
 
 STEP 4 - CALIBRATE (very important)
 - Short-term price moves are noisy. Stay modest: normally keep each side between 30 and 70.
@@ -97,6 +97,18 @@ STRICT RULES
 - market_sentiment is exactly one of "Bullish", "Bearish", "Neutral". If live context is unavailable, use "Neutral".
 - summary_reason must refer to what is really visible on this chart (for example the last candles, a level, a wick), not generic statements.
 - Never fabricate prices, news or indicators that are not visible or verifiable.
+"""
+
+    const val RESEARCH = """
+Look at this trading chart screenshot.
+1) Identify the asset or currency pair and the chart timeframe.
+2) Use Google Search to research the CURRENT market for that asset: the latest news today, today's price trend, scheduled economic data or central bank events within the next hour, and the overall market sentiment.
+3) Reply in plain text only, maximum 120 words, in exactly this layout:
+ASSET: ...
+NEWS AND TREND: ...
+UPCOMING EVENTS: ...
+LIVE SENTIMENT: Bullish / Bearish / Neutral
+Do not predict the price. Do not invent anything. If you find nothing notable, write "nothing notable" for that line.
 """
 }
 
@@ -275,8 +287,8 @@ object ResultCard {
         if (center) gravity = Gravity.CENTER
     }
 
-    fun loading(c: Context): View {
-        val tv = text(c, "AI চার্ট বিশ্লেষণ করছে…", 14f, Color.WHITE, bold = true, center = true)
+    fun loading(c: Context, msg: String = "AI চার্ট বিশ্লেষণ করছে…"): View {
+        val tv = text(c, msg, 14f, Color.WHITE, bold = true, center = true)
         tv.setPadding(dp(c, 22), dp(c, 14), dp(c, 22), dp(c, 14))
         tv.background = GradientDrawable().apply {
             cornerRadius = dp(c, 30).toFloat()
@@ -294,6 +306,7 @@ object ResultCard {
         sentiment: String,
         reason: String,
         web: Boolean,
+        brief: String,
         onClose: () -> Unit
     ): View {
         val root = LinearLayout(c).apply {
@@ -351,6 +364,12 @@ object ResultCard {
         val why = text(c, reason, 13f, Color.rgb(200, 195, 205))
         why.setLineSpacing(0f, 1.25f)
         root.addView(why, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(c, 8) })
+
+        if (brief.isNotEmpty()) {
+            val b = text(c, "🌐 লাইভ তথ্য: " + brief.take(320), 11f, Color.rgb(150, 178, 162))
+            b.setLineSpacing(0f, 1.25f)
+            root.addView(b, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(c, 8) })
+        }
 
         root.addView(
             text(c, "এটি অনুমান, নিশ্চিত ভবিষ্যদ্বাণী নয়।", 11f, Color.rgb(140, 133, 146)),
@@ -538,13 +557,9 @@ class OverlayService : Service() {
     }
 
     // ---------- AI call (Gemini) ----------
-    private fun callGemini(key: String, b64: String, withSearch: Boolean, m: String): Pair<Int, String> {
-        val minutes = getSharedPreferences("gasi", MODE_PRIVATE).getInt("minutes", 5)
-        val prompt = AnalysisPrompt.TEXT.trimIndent() +
-            "\n\nFORECAST HORIZON: The UP and DOWN probabilities must describe the price " +
-            "direction over the NEXT " + minutes + " MINUTE" + (if (minutes == 1) "" else "S") +
-            " from the latest candle in the screenshot. The chart's own timeframe may differ; " +
-            "still answer only for this horizon."
+    private fun callGemini(
+        key: String, b64: String, withSearch: Boolean, m: String, prompt: String
+    ): Pair<Int, String> {
         val parts = JSONArray()
             .put(JSONObject().put("text", prompt))
             .put(
@@ -578,6 +593,70 @@ class OverlayService : Service() {
         return Pair(code, text)
     }
 
+    // মডেল fallback + সার্ভার ব্যস্ত হলে retry। (code, body) ফেরত দেয়
+    private fun request(
+        key: String, b64: String, prompt: String, withSearch: Boolean
+    ): Pair<Int, String> {
+        val retryable = setOf(429, 500, 503, 504)
+        var r = Pair(0, "")
+        for (m in models) {
+            for (attempt in 0..1) {
+                r = try {
+                    callGemini(key, b64, withSearch, m, prompt)
+                } catch (e: Exception) {
+                    Pair(-1, e.message ?: "network error")
+                }
+                if (r.first in 200..299) return r
+                if (r.first in retryable && attempt == 0) {
+                    Thread.sleep(2500)
+                    continue
+                }
+                break
+            }
+            if (r.first != 404 && r.first !in retryable) return r
+        }
+        return r
+    }
+
+    private fun errorText(r: Pair<Int, String>): String {
+        var m = ""
+        try {
+            m = JSONObject(r.second).getJSONObject("error").getString("message")
+        } catch (_: Exception) {
+            m = r.second
+        }
+        return "API " + r.first + ": " + m.take(160)
+    }
+
+    // সাধারণ লেখা + ওয়েব সার্চ হয়েছিল কিনা
+    private fun readText(resp: String): Pair<String, Boolean> {
+        val cands = JSONObject(resp).optJSONArray("candidates")
+        if (cands == null || cands.length() == 0) return Pair("", false)
+        val c0 = cands.getJSONObject(0)
+        val q = c0.optJSONObject("groundingMetadata")?.optJSONArray("webSearchQueries")
+        val parts = c0.optJSONObject("content")?.optJSONArray("parts")
+        val sb = StringBuilder()
+        if (parts != null) {
+            for (i in 0 until parts.length()) {
+                sb.append(parts.getJSONObject(i).optString("text"))
+            }
+        }
+        return Pair(sb.toString().trim(), q != null && q.length() > 0)
+    }
+
+    // উত্তর থেকে JSON অংশ আর finishReason
+    private fun readReply(resp: String): Pair<String, String> {
+        val cands = JSONObject(resp).optJSONArray("candidates")
+        if (cands == null || cands.length() == 0) return Pair("", "NO_CANDIDATE")
+        val c0 = cands.getJSONObject(0)
+        val finish = c0.optString("finishReason", "")
+        val raw = readText(resp).first
+        val s = raw.indexOf('{')
+        val e = raw.lastIndexOf('}')
+        val json = if (s >= 0 && e > s) raw.substring(s, e + 1) else ""
+        return Pair(json, finish)
+    }
+
     private fun analyze(file: File) {
         val key = getSharedPreferences("gasi", MODE_PRIVATE)
             .getString("key", "") ?: ""
@@ -587,63 +666,55 @@ class OverlayService : Service() {
             return
         }
 
-        showLoading()
+        showLoading("ওয়েব থেকে বাজারের তথ্য নিচ্ছে…")
 
         thread {
             try {
                 val b64 = Base64.encodeToString(file.readBytes(), Base64.NO_WRAP)
+                val minutes = getSharedPreferences("gasi", MODE_PRIVATE).getInt("minutes", 5)
 
-                // প্রথমে Google Search সহ, না হলে search ছাড়া আবার চেষ্টা
-                var r = Pair(0, "")
-                var searched = true
-                // 429/500/503/504 = Google সার্ভার ব্যস্ত; একটু অপেক্ষা করে আবার, তারপর পরের মডেল
-                val retryable = setOf(429, 500, 503, 504)
-                outer@ for (m in models) {
-                    for (attempt in 0..1) {
-                        searched = true
-                        r = callGemini(key, b64, true, m)
-                        if (r.first !in 200..299) {
-                            searched = false
-                            r = callGemini(key, b64, false, m)
-                        }
-                        if (r.first in 200..299) break@outer
-                        if (r.first in retryable && attempt == 0) {
-                            Thread.sleep(2500)
-                            continue
-                        }
-                        break
-                    }
-                    if (r.first != 404 && r.first !in retryable) break
+                // ধাপ ১: Google Search দিয়ে লাইভ বাজারের সারসংক্ষেপ
+                var brief = ""
+                var web = false
+                val r1 = request(key, b64, AnalysisPrompt.RESEARCH.trimIndent(), true)
+                if (r1.first in 200..299) {
+                    val t = readText(r1.second)
+                    web = t.second && t.first.isNotEmpty()
+                    if (web) brief = t.first
                 }
 
+                handler.post { showLoading("ওয়েব ও বইয়ের জ্ঞান মিলিয়ে বিশ্লেষণ করছে…") }
+
+                // ধাপ ২: চার্ট + বইয়ের জ্ঞান + ওয়েবের সারসংক্ষেপ মিলিয়ে চূড়ান্ত পার্সেন্টেজ
+                val horizon = "\n\nFORECAST HORIZON: The UP and DOWN probabilities must describe " +
+                    "the price direction over the NEXT " + minutes + " MINUTE" +
+                    (if (minutes == 1) "" else "S") +
+                    " from the latest candle in the screenshot. The chart's own timeframe may " +
+                    "differ; still answer only for this horizon."
+                val live = if (brief.isNotEmpty()) {
+                    "\n\nLIVE MARKET BRIEF (gathered from Google Search just now):\n" + brief
+                } else {
+                    "\n\nLIVE MARKET BRIEF: unavailable. Use Neutral for market_sentiment."
+                }
+                val finalPrompt = AnalysisPrompt.TEXT.trimIndent() + horizon + live
+
+                var r = request(key, b64, finalPrompt, false)
                 if (r.first !in 200..299) {
-                    var m = ""
-                    try {
-                        m = JSONObject(r.second).getJSONObject("error").getString("message")
-                    } catch (_: Exception) {
-                    }
                     handler.post { clearResult() }
-                    toast("API " + r.first + ": " + m.take(160), true)
+                    toast(errorText(r), true)
                     return@thread
                 }
-
-                val cands = JSONObject(r.second).optJSONArray("candidates")
-                if (cands == null || cands.length() == 0) {
+                var rep = readReply(r.second)
+                if (rep.first.isEmpty()) {
+                    r = request(key, b64, finalPrompt, false)
+                    if (r.first in 200..299) rep = readReply(r.second)
+                }
+                if (rep.first.isEmpty()) {
                     handler.post { clearResult() }
-                    toast("AI উত্তর দেয়নি (ছবি ব্লক হতে পারে)", true)
+                    toast("AI খালি উত্তর দিয়েছে (" + rep.second + "), আবার চাপুন", true)
                     return@thread
                 }
-                val gm = cands.getJSONObject(0).optJSONObject("groundingMetadata")
-                val queries = gm?.optJSONArray("webSearchQueries")
-                val web = searched && queries != null && queries.length() > 0
-                val parts = cands.getJSONObject(0)
-                    .getJSONObject("content").getJSONArray("parts")
-                val sb = StringBuilder()
-                for (i in 0 until parts.length()) {
-                    sb.append(parts.getJSONObject(i).optString("text"))
-                }
-                val raw = sb.toString()
-                val j = JSONObject(raw.substring(raw.indexOf('{'), raw.lastIndexOf('}') + 1))
+                val j = JSONObject(rep.first)
 
                 var up = j.getDouble("up_probability_percent")
                 var down = j.getDouble("down_probability_percent")
@@ -656,7 +727,7 @@ class OverlayService : Service() {
                 val sent = j.optString("market_sentiment", "Neutral")
                 val why = j.optString("summary_reason", "")
 
-                handler.post { showResult(up, down, pattern, sent, why, web) }
+                handler.post { showResult(up, down, pattern, sent, why, web, brief) }
             } catch (e: Exception) {
                 handler.post { clearResult() }
                 toast("AI error: " + (e.message ?: ""), true)
@@ -689,9 +760,9 @@ class OverlayService : Service() {
     }
 
     // ---------- Result overlay ----------
-    private fun showLoading() {
+    private fun showLoading(msg: String = "AI চার্ট বিশ্লেষণ করছে…") {
         clearResult()
-        val v = ResultCard.loading(this)
+        val v = ResultCard.loading(this, msg)
         val lp = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -706,10 +777,11 @@ class OverlayService : Service() {
     }
 
     private fun showResult(
-        up: Double, down: Double, pattern: String, sent: String, why: String, web: Boolean
+        up: Double, down: Double, pattern: String, sent: String, why: String,
+        web: Boolean, brief: String
     ) {
         clearResult()
-        val card = ResultCard.build(this, up, down, pattern, sent, why, web) { clearResult() }
+        val card = ResultCard.build(this, up, down, pattern, sent, why, web, brief) { clearResult() }
         val lp = WindowManager.LayoutParams(
             (resources.displayMetrics.widthPixels * 0.92).toInt(),
             WindowManager.LayoutParams.WRAP_CONTENT,
