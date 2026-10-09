@@ -113,6 +113,17 @@ class MainActivity : FlutterActivity() {
                     result.success(null)
                 }
 
+                "getWeb" -> {
+                    result.success(getSharedPreferences("gasi", MODE_PRIVATE).getBoolean("web", true))
+                }
+
+                "saveWeb" -> {
+                    val v = call.argument<Boolean>("web") ?: true
+                    getSharedPreferences("gasi", MODE_PRIVATE)
+                        .edit().putBoolean("web", v).apply()
+                    result.success(null)
+                }
+
                 "askApiKey" -> {
                     showKeyDialog()
                     result.success(null)
