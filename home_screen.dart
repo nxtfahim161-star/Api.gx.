@@ -130,6 +130,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             gap,
             const SetupCard(),
             gap,
+            const TimeframeCard(),
+            gap,
             CaptureCard(
               granted: _granted,
               starting: _starting,
@@ -328,6 +330,112 @@ class _SetupCardState extends State<SetupCard> with WidgetsBindingObserver {
               ),
             ),
           ],
+        ],
+      ),
+    );
+  }
+}
+
+/// কত মিনিটের পূর্বাভাস চাই (1 / 5 / 15) সেটা বাছাই করার কার্ড।
+class TimeframeCard extends StatefulWidget {
+  const TimeframeCard({super.key});
+
+  @override
+  State<TimeframeCard> createState() => _TimeframeCardState();
+}
+
+class _TimeframeCardState extends State<TimeframeCard> {
+  static const _ch = MethodChannel('gasi/native');
+  static const _options = [1, 5, 15];
+  int _sel = 5;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final m = await _ch.invokeMethod<int>('getMinutes');
+      if (mounted && m != null) setState(() => _sel = m);
+    } catch (_) {}
+  }
+
+  Future<void> _pick(int m) async {
+    setState(() => _sel = m);
+    try {
+      await _ch.invokeMethod('saveMinutes', {'minutes': m});
+    } catch (_) {}
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: const Color(0xFF111015),
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: Colors.white.withOpacity(0.07)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Row(
+            children: [
+              Icon(Icons.timer_outlined, size: 20, color: AppColors.lilac),
+              SizedBox(width: 9),
+              Expanded(
+                child: Text(
+                  'কত মিনিটের পূর্বাভাস?',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          const Text(
+            'UP/DOWN পার্সেন্টেজ এই সময়ের জন্য আসবে।',
+            style: TextStyle(fontSize: 12, color: Color(0xFF8F8993)),
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              for (final m in _options)
+                Expanded(
+                  child: Padding(
+                    padding: EdgeInsets.only(right: m == _options.last ? 0 : 8),
+                    child: GestureDetector(
+                      onTap: () => _pick(m),
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 160),
+                        height: 46,
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          color: _sel == m
+                              ? AppColors.purple
+                              : Colors.white.withOpacity(0.05),
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(
+                            color: _sel == m
+                                ? AppColors.lilac
+                                : Colors.white.withOpacity(0.08),
+                          ),
+                        ),
+                        child: Text(
+                          '$m মিনিট',
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w800,
+                            color: _sel == m ? Colors.white : const Color(0xFFB9B3BF),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
         ],
       ),
     );
