@@ -549,8 +549,14 @@ class OverlayService : Service() {
 
     // ---------- AI call (Gemini) ----------
     private fun callGemini(key: String, b64: String, withSearch: Boolean, m: String): Pair<Int, String> {
+        val minutes = getSharedPreferences("gasi", MODE_PRIVATE).getInt("minutes", 5)
+        val prompt = AnalysisPrompt.TEXT.trimIndent() +
+            "\n\nFORECAST HORIZON: The UP and DOWN probabilities must describe the price " +
+            "direction over the NEXT " + minutes + " MINUTE" + (if (minutes == 1) "" else "S") +
+            " from the latest candle in the screenshot. The chart's own timeframe may differ; " +
+            "still answer only for this horizon."
         val parts = JSONArray()
-            .put(JSONObject().put("text", AnalysisPrompt.TEXT.trimIndent()))
+            .put(JSONObject().put("text", prompt))
             .put(
                 JSONObject().put(
                     "inline_data", JSONObject()
