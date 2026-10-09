@@ -399,6 +399,9 @@ class OverlayService : Service() {
     private var token = 0
 
     // 404 এলে পরের মডেল চেষ্টা করবে
+    // একই অ্যাসেটে বারবার ওয়েব সার্চ না করতে ১০ মিনিট পর্যন্ত সারসংক্ষেপ মনে রাখে
+    private var cachedBrief = ""
+    private var cachedAt = 0L
     private val models = listOf("gemini-flash-latest", "gemini-3.5-flash", "gemini-3-flash-preview")
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -558,7 +561,8 @@ class OverlayService : Service() {
 
     // ---------- AI call (Gemini) ----------
     private fun callGemini(
-        key: String, b64: String, withSearch: Boolean, m: String, prompt: String
+        key: String, b64: String, withSearch: Boolean, m: String, prompt: String,
+        lowThink: Boolean
     ): Pair<Int, String> {
         val parts = JSONArray()
             .put(JSONObject().put("text", prompt))
@@ -574,6 +578,13 @@ class OverlayService : Service() {
         if (withSearch) {
             body.put(
                 "tools", JSONArray().put(JSONObject().put("google_search", JSONObject()))
+            )
+        }
+        if (lowThink) {
+            body.put(
+                "generationConfig", JSONObject().put(
+                    "thinkingConfig", JSONObject().put("thinkingLevel", "low")
+                )
             )
         }
         val c = URL(
@@ -602,9 +613,17 @@ class OverlayService : Service() {
         for (m in models) {
             for (attempt in 0..1) {
                 r = try {
-                    callGemini(key, b64, withSearch, m, prompt)
+                    callGemini(key, b64, withSearch, m, prompt, true)
                 } catch (e: Exception) {
                     Pair(-1, e.message ?: "network error")
+                }
+                // thinking সেটিং না নিলে (400) সেটিং ছাড়া আবার
+                if (r.first == 400 && r.second.contains("think", ignoreCase = true)) {
+                    r = try {
+                        callGemini(key, b64, withSearch, m, prompt, false)
+                    } catch (e: Exception) {
+                        Pair(-1, e.message ?: "network error")
+                    }
                 }
                 if (r.first in 200..299) return r
                 if (r.first in retryable && attempt == 0) {
@@ -658,76 +677,114 @@ class OverlayService : Service() {
     }
 
     private fun analyze(file: File) {
-        val key = getSharedPreferences("gasi", MODE_PRIVATE)
-            .getString("key", "") ?: ""
+        val prefs = getSharedPreferences("gasi", MODE_PRIVATE)
+        val key = prefs.getString("key", "") ?: ""
         if (key.isEmpty()) {
             toast("API key সেট করা নেই, Share খুলছে")
             share(file)
             return
         }
 
-        showLoading("ওয়েব থেকে বাজারের তথ্য নিচ্ছে…")
+        val useWeb = prefs.getBoolean("web", true)
+        showLoading(if (useWeb) "বাজারের তথ্য দেখছে…" else "AI চার্ট বিশ্লেষণ করছে…")
 
         thread {
             try {
                 val b64 = Base64.encodeToString(file.readBytes(), Base64.NO_WRAP)
-                val minutes = getSharedPreferences("gasi", MODE_PRIVATE).getInt("minutes", 5)
-
-                // ধাপ ১: Google Search দিয়ে লাইভ বাজারের সারসংক্ষেপ
-                var brief = ""
-                var web = false
-                val r1 = request(key, b64, AnalysisPrompt.RESEARCH.trimIndent(), true)
-                if (r1.first in 200..299) {
-                    val t = readText(r1.second)
-                    web = t.second && t.first.isNotEmpty()
-                    if (web) brief = t.first
-                }
-
-                handler.post { showLoading("ওয়েব ও বইয়ের জ্ঞান মিলিয়ে বিশ্লেষণ করছে…") }
-
-                // ধাপ ২: চার্ট + বইয়ের জ্ঞান + ওয়েবের সারসংক্ষেপ মিলিয়ে চূড়ান্ত পার্সেন্টেজ
+                val minutes = prefs.getInt("minutes", 5)
                 val horizon = "\n\nFORECAST HORIZON: The UP and DOWN probabilities must describe " +
                     "the price direction over the NEXT " + minutes + " MINUTE" +
                     (if (minutes == 1) "" else "S") +
                     " from the latest candle in the screenshot. The chart's own timeframe may " +
                     "differ; still answer only for this horizon."
-                val live = if (brief.isNotEmpty()) {
-                    "\n\nLIVE MARKET BRIEF (gathered from Google Search just now):\n" + brief
-                } else {
-                    "\n\nLIVE MARKET BRIEF: unavailable. Use Neutral for market_sentiment."
-                }
-                val finalPrompt = AnalysisPrompt.TEXT.trimIndent() + horizon + live
+                val note = "\n\nNOTE: This brief may have been gathered a few minutes ago for a " +
+                    "previous chart. In addition to the JSON fields above, add one boolean field " +
+                    "\"brief_matches_chart\": true if the ASSET named in the brief is the same asset " +
+                    "as the chart in this screenshot, otherwise false."
 
-                var r = request(key, b64, finalPrompt, false)
-                if (r.first !in 200..299) {
-                    handler.post { clearResult() }
-                    toast(errorText(r), true)
+                var forceFresh = false
+
+                for (round in 0..1) {
+                    var brief = ""
+                    var web = false
+                    var fromCache = false
+
+                    if (useWeb) {
+                        val fresh = System.currentTimeMillis() - cachedAt < 10 * 60 * 1000L
+                        if (!forceFresh && cachedBrief.isNotEmpty() && fresh) {
+                            // দ্রুত পথ: আগের সারসংক্ষেপ ব্যবহার, ওয়েব সার্চ লাগে না
+                            brief = cachedBrief
+                            web = true
+                            fromCache = true
+                        } else {
+                            handler.post { showLoading("ওয়েব থেকে বাজারের তথ্য নিচ্ছে…") }
+                            val r1 = request(key, b64, AnalysisPrompt.RESEARCH.trimIndent(), true)
+                            if (r1.first in 200..299) {
+                                val tx = readText(r1.second)
+                                web = tx.second && tx.first.isNotEmpty()
+                                if (web) {
+                                    brief = tx.first
+                                    cachedBrief = brief
+                                    cachedAt = System.currentTimeMillis()
+                                }
+                            }
+                        }
+                    }
+
+                    handler.post { showLoading("বইয়ের জ্ঞান ও চার্ট মিলিয়ে বিশ্লেষণ করছে…") }
+
+                    val live = when {
+                        brief.isNotEmpty() ->
+                            "\n\nLIVE MARKET BRIEF (gathered from Google Search):\n" + brief +
+                                (if (fromCache) note else "")
+                        useWeb ->
+                            "\n\nLIVE MARKET BRIEF: unavailable. Use Neutral for market_sentiment."
+                        else ->
+                            "\n\nLIVE MARKET BRIEF: not requested (fast mode). " +
+                                "Use Neutral for market_sentiment."
+                    }
+                    val finalPrompt = AnalysisPrompt.TEXT.trimIndent() + horizon + live
+
+                    var r = request(key, b64, finalPrompt, false)
+                    if (r.first !in 200..299) {
+                        handler.post { clearResult() }
+                        toast(errorText(r), true)
+                        return@thread
+                    }
+                    var rep = readReply(r.second)
+                    if (rep.first.isEmpty()) {
+                        r = request(key, b64, finalPrompt, false)
+                        if (r.first in 200..299) rep = readReply(r.second)
+                    }
+                    if (rep.first.isEmpty()) {
+                        handler.post { clearResult() }
+                        toast("AI খালি উত্তর দিয়েছে (" + rep.second + "), আবার চাপুন", true)
+                        return@thread
+                    }
+                    val j = JSONObject(rep.first)
+
+                    // আগের সারসংক্ষেপ অন্য অ্যাসেটের হলে নতুন করে ওয়েব সার্চ
+                    if (fromCache && !j.optBoolean("brief_matches_chart", true)) {
+                        cachedBrief = ""
+                        forceFresh = true
+                        continue
+                    }
+
+                    var up = j.getDouble("up_probability_percent")
+                    var down = j.getDouble("down_probability_percent")
+                    val total = up + down
+                    if (total > 0 && abs(total - 100.0) > 0.1) {
+                        up = up / total * 100.0
+                        down = 100.0 - up
+                    }
+                    val pattern = j.optString("technical_pattern", "No clear classical pattern")
+                    val sent = j.optString("market_sentiment", "Neutral")
+                    val why = j.optString("summary_reason", "")
+                    val shown = if (fromCache) "(কিছুক্ষণ আগের) " + brief else brief
+
+                    handler.post { showResult(up, down, pattern, sent, why, web, shown) }
                     return@thread
                 }
-                var rep = readReply(r.second)
-                if (rep.first.isEmpty()) {
-                    r = request(key, b64, finalPrompt, false)
-                    if (r.first in 200..299) rep = readReply(r.second)
-                }
-                if (rep.first.isEmpty()) {
-                    handler.post { clearResult() }
-                    toast("AI খালি উত্তর দিয়েছে (" + rep.second + "), আবার চাপুন", true)
-                    return@thread
-                }
-                val j = JSONObject(rep.first)
-
-                var up = j.getDouble("up_probability_percent")
-                var down = j.getDouble("down_probability_percent")
-                val total = up + down
-                if (total > 0 && abs(total - 100.0) > 0.1) {
-                    up = up / total * 100.0
-                    down = 100.0 - up
-                }
-                val pattern = j.optString("technical_pattern", "No clear classical pattern")
-                val sent = j.optString("market_sentiment", "Neutral")
-                val why = j.optString("summary_reason", "")
-
-                handler.post { showResult(up, down, pattern, sent, why, web, brief) }
             } catch (e: Exception) {
                 handler.post { clearResult() }
                 toast("AI error: " + (e.message ?: ""), true)
@@ -842,53 +899,4 @@ class OverlayService : Service() {
                     startX = lp.x
                     startY = lp.y
                     touchX = e.rawX
-                    touchY = e.rawY
-                    true
-                }
-                MotionEvent.ACTION_MOVE -> {
-                    lp.x = startX + (e.rawX - touchX).toInt()
-                    lp.y = startY + (e.rawY - touchY).toInt()
-                    wm.updateViewLayout(v, lp)
-                    true
-                }
-                MotionEvent.ACTION_UP -> {
-                    if (abs(e.rawX - touchX) < 15 && abs(e.rawY - touchY) < 15) {
-                        capture()
-                    }
-                    true
-                }
-                else -> false
-            }
-        }
-
-        wm.addView(tv, lp)
-        button = tv
-    }
-
-    private fun toast(msg: String, long: Boolean = false) {
-        handler.post {
-            Toast.makeText(
-                applicationContext, msg,
-                if (long) Toast.LENGTH_LONG else Toast.LENGTH_SHORT
-            ).show()
-        }
-    }
-
-    override fun onDestroy() {
-        clearResult()
-        button?.let {
-            try {
-                wm.removeView(it)
-            } catch (_: Exception) {
-            }
-        }
-        button = null
-        try { display?.release() } catch (_: Exception) {}
-        try { reader?.close() } catch (_: Exception) {}
-        try { projection?.stop() } catch (_: Exception) {}
-        display = null
-        reader = null
-        projection = null
-        super.onDestroy()
-    }
-}
+            
