@@ -188,7 +188,7 @@ class GaugeView(
         txt.textSize = size
         return txt.measureText(text) + 24 * d
     }
-
+    
     override fun onDraw(canvas: Canvas) {
         val stroke = strokeFor()
         val r = radiusFor(width)
@@ -397,7 +397,7 @@ class OverlayService : Service() {
     private var armed = false
     private var waiting = false
     private var token = 0
-
+    
     // 404 এলে পরের মডেল চেষ্টা করবে
     // একই অ্যাসেটে বারবার ওয়েব সার্চ না করতে ১০ মিনিট পর্যন্ত সারসংক্ষেপ মনে রাখে
     private var cachedBrief = ""
@@ -603,7 +603,7 @@ class OverlayService : Service() {
             ?.bufferedReader()?.readText() ?: ""
         return Pair(code, text)
     }
-
+    
     // মডেল fallback + সার্ভার ব্যস্ত হলে retry। (code, body) ফেরত দেয়
     private fun request(
         key: String, b64: String, prompt: String, withSearch: Boolean
@@ -791,7 +791,7 @@ class OverlayService : Service() {
             }
         }
     }
-
+    
     // ---------- Share fallback (key না থাকলে) ----------
     private fun share(file: File) {
         try {
@@ -899,4 +899,53 @@ class OverlayService : Service() {
                     startX = lp.x
                     startY = lp.y
                     touchX = e.rawX
-            
+                    touchY = e.rawY
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    lp.x = startX + (e.rawX - touchX).toInt()
+                    lp.y = startY + (e.rawY - touchY).toInt()
+                    wm.updateViewLayout(v, lp)
+                    true
+                }
+                MotionEvent.ACTION_UP -> {
+                    if (abs(e.rawX - touchX) < 15 && abs(e.rawY - touchY) < 15) {
+                        capture()
+                    }
+                    true
+                }
+                else -> false
+            }
+        }
+
+        wm.addView(tv, lp)
+        button = tv
+    }
+
+    private fun toast(msg: String, long: Boolean = false) {
+        handler.post {
+            Toast.makeText(
+                applicationContext, msg,
+                if (long) Toast.LENGTH_LONG else Toast.LENGTH_SHORT
+            ).show()
+        }
+    }
+
+    override fun onDestroy() {
+        clearResult()
+        button?.let {
+            try {
+                wm.removeView(it)
+            } catch (_: Exception) {
+            }
+        }
+        button = null
+        try { display?.release() } catch (_: Exception) {}
+        try { reader?.close() } catch (_: Exception) {}
+        try { projection?.stop() } catch (_: Exception) {}
+        display = null
+        reader = null
+        projection = null
+        super.onDestroy()
+    }
+}
