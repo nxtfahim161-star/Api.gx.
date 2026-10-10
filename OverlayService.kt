@@ -159,7 +159,7 @@ class GaugeView(
         val height = cy + 0.5f * r + strokeFor() / 2 + 52 * d
         setMeasuredDimension(width, height.toInt())
     }
-
+    
     private fun pill(
         canvas: Canvas, text: String, left: Float, top: Float,
         bg: Int, size: Float, outlined: Boolean
@@ -188,7 +188,7 @@ class GaugeView(
         txt.textSize = size
         return txt.measureText(text) + 24 * d
     }
-    
+
     override fun onDraw(canvas: Canvas) {
         val stroke = strokeFor()
         val r = radiusFor(width)
@@ -297,7 +297,7 @@ object ResultCard {
         }
         return tv
     }
-
+    
     fun build(
         c: Context,
         up: Double,
@@ -397,11 +397,12 @@ class OverlayService : Service() {
     private var armed = false
     private var waiting = false
     private var token = 0
-    
+
     // 404 এলে পরের মডেল চেষ্টা করবে
     // একই অ্যাসেটে বারবার ওয়েব সার্চ না করতে ১০ মিনিট পর্যন্ত সারসংক্ষেপ মনে রাখে
     private var cachedBrief = ""
     private var cachedAt = 0L
+    private var refreshing = false
     private val models = listOf("gemini-flash-latest", "gemini-3.5-flash", "gemini-3-flash-preview")
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -505,7 +506,7 @@ class OverlayService : Service() {
             r.surface, null, handler
         )
     }
-
+    
     private fun capture() {
         if (waiting) return
         waiting = true
@@ -545,9 +546,18 @@ class OverlayService : Service() {
             dir.mkdirs()
             dir.listFiles()?.forEach { it.delete() }
             val file = File(dir, "chart_" + System.currentTimeMillis() + ".jpg")
-            FileOutputStream(file).use { out ->
-                bmp.compress(Bitmap.CompressFormat.JPEG, 80, out)
+            // বড় ছবি ছোট করে (লম্বা দিক ১৮০০px) পাঠালে আপলোড দ্রুত হয়
+            val longSide = maxOf(w, h)
+            val scale = if (longSide > 1800) 1800f / longSide else 1f
+            val outBmp = if (scale < 1f) {
+                Bitmap.createScaledBitmap(bmp, (w * scale).toInt(), (h * scale).toInt(), true)
+            } else {
+                bmp
             }
+            FileOutputStream(file).use { out ->
+                outBmp.compress(Bitmap.CompressFormat.JPEG, 75, out)
+            }
+            if (outBmp !== bmp) outBmp.recycle()
             bmp.recycle()
             shareFile = file
         } catch (e: Exception) {
@@ -562,7 +572,8 @@ class OverlayService : Service() {
     // ---------- AI call (Gemini) ----------
     private fun callGemini(
         key: String, b64: String, withSearch: Boolean, m: String, prompt: String,
-        lowThink: Boolean
+        lowThink: Boolean,
+        json: Boolean
     ): Pair<Int, String> {
         val parts = JSONArray()
             .put(JSONObject().put("text", prompt))
@@ -580,13 +591,15 @@ class OverlayService : Service() {
                 "tools", JSONArray().put(JSONObject().put("google_search", JSONObject()))
             )
         }
+        val gen = JSONObject()
         if (lowThink) {
-            body.put(
-                "generationConfig", JSONObject().put(
-                    "thinkingConfig", JSONObject().put("thinkingLevel", "low")
-                )
-            )
+            gen.put("thinkingConfig", JSONObject().put("thinkingLevel", "low"))
         }
+        if (json) {
+            // সরাসরি JSON উত্তর: দ্রুত ও পরিষ্কার (search টুলের সাথে চলে না)
+            gen.put("responseMimeType", "application/json")
+        }
+        if (gen.length() > 0) body.put("generationConfig", gen)
         val c = URL(
             "https://generativelanguage.googleapis.com/v1beta/models/$m:generateContent"
         ).openConnection() as HttpURLConnection
@@ -603,24 +616,25 @@ class OverlayService : Service() {
             ?.bufferedReader()?.readText() ?: ""
         return Pair(code, text)
     }
-    
+
     // মডেল fallback + সার্ভার ব্যস্ত হলে retry। (code, body) ফেরত দেয়
     private fun request(
-        key: String, b64: String, prompt: String, withSearch: Boolean
+        key: String, b64: String, prompt: String, withSearch: Boolean,
+        json: Boolean = false
     ): Pair<Int, String> {
         val retryable = setOf(429, 500, 503, 504)
         var r = Pair(0, "")
         for (m in models) {
             for (attempt in 0..1) {
                 r = try {
-                    callGemini(key, b64, withSearch, m, prompt, true)
+                    callGemini(key, b64, withSearch, m, prompt, true, json)
                 } catch (e: Exception) {
                     Pair(-1, e.message ?: "network error")
                 }
-                // thinking সেটিং না নিলে (400) সেটিং ছাড়া আবার
-                if (r.first == 400 && r.second.contains("think", ignoreCase = true)) {
+                // সেটিং না নিলে (400) সাধারণ অনুরোধে আবার
+                if (r.first == 400) {
                     r = try {
-                        callGemini(key, b64, withSearch, m, prompt, false)
+                        callGemini(key, b64, withSearch, m, prompt, false, false)
                     } catch (e: Exception) {
                         Pair(-1, e.message ?: "network error")
                     }
@@ -646,7 +660,7 @@ class OverlayService : Service() {
         }
         return "API " + r.first + ": " + m.take(160)
     }
-
+    
     // সাধারণ লেখা + ওয়েব সার্চ হয়েছিল কিনা
     private fun readText(resp: String): Pair<String, Boolean> {
         val cands = JSONObject(resp).optJSONArray("candidates")
@@ -710,7 +724,7 @@ class OverlayService : Service() {
                     var fromCache = false
 
                     if (useWeb) {
-                        val fresh = System.currentTimeMillis() - cachedAt < 10 * 60 * 1000L
+                        val fresh = System.currentTimeMillis() - cachedAt < 15 * 60 * 1000L
                         if (!forceFresh && cachedBrief.isNotEmpty() && fresh) {
                             // দ্রুত পথ: আগের সারসংক্ষেপ ব্যবহার, ওয়েব সার্চ লাগে না
                             brief = cachedBrief
@@ -745,7 +759,7 @@ class OverlayService : Service() {
                     }
                     val finalPrompt = AnalysisPrompt.TEXT.trimIndent() + horizon + live
 
-                    var r = request(key, b64, finalPrompt, false)
+                    var r = request(key, b64, finalPrompt, false, true)
                     if (r.first !in 200..299) {
                         handler.post { clearResult() }
                         toast(errorText(r), true)
@@ -753,7 +767,7 @@ class OverlayService : Service() {
                     }
                     var rep = readReply(r.second)
                     if (rep.first.isEmpty()) {
-                        r = request(key, b64, finalPrompt, false)
+                        r = request(key, b64, finalPrompt, false, true)
                         if (r.first in 200..299) rep = readReply(r.second)
                     }
                     if (rep.first.isEmpty()) {
@@ -783,6 +797,27 @@ class OverlayService : Service() {
                     val shown = if (fromCache) "(কিছুক্ষণ আগের) " + brief else brief
 
                     handler.post { showResult(up, down, pattern, sent, why, web, shown) }
+
+                    // রেজাল্ট দেখানোর পর ব্যাকগ্রাউন্ডে ওয়েব তথ্য নতুন করে রাখা,
+                    // যাতে পরের বার G চাপলে অপেক্ষা করতে না হয়
+                    if (useWeb && web && !refreshing &&
+                        System.currentTimeMillis() - cachedAt > 6 * 60 * 1000L
+                    ) {
+                        refreshing = true
+                        try {
+                            val rr = request(key, b64, AnalysisPrompt.RESEARCH.trimIndent(), true)
+                            if (rr.first in 200..299) {
+                                val tx = readText(rr.second)
+                                if (tx.second && tx.first.isNotEmpty()) {
+                                    cachedBrief = tx.first
+                                    cachedAt = System.currentTimeMillis()
+                                }
+                            }
+                        } catch (_: Exception) {
+                        } finally {
+                            refreshing = false
+                        }
+                    }
                     return@thread
                 }
             } catch (e: Exception) {
