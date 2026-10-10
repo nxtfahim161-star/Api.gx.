@@ -124,6 +124,76 @@ class MainActivity : FlutterActivity() {
                     result.success(null)
                 }
 
+                "getStats" -> {
+                    val sp = getSharedPreferences("gasi", MODE_PRIVATE)
+                    result.success(
+                        listOf(
+                            sp.getInt("t_all", 0), sp.getInt("h_all", 0),
+                            sp.getInt("t_1", 0), sp.getInt("h_1", 0),
+                            sp.getInt("t_5", 0), sp.getInt("h_5", 0),
+                            sp.getInt("t_15", 0), sp.getInt("h_15", 0)
+                        )
+                    )
+                }
+
+                "resetStats" -> {
+                    val ed = getSharedPreferences("gasi", MODE_PRIVATE).edit()
+                    for (k in listOf("all", "1", "5", "15")) {
+                        ed.remove("t_$k")
+                        ed.remove("h_$k")
+                    }
+                    ed.apply()
+                    result.success(null)
+                }
+
+                "getUi" -> {
+                    val sp = getSharedPreferences("gasi", MODE_PRIVATE)
+                    result.success(
+                        mapOf(
+                            "btn_color" to (sp.getString("btn_color", "#8B5CF6") ?: "#8B5CF6"),
+                            "btn_icon" to (sp.getString("btn_icon", "G") ?: "G"),
+                            "btn_size" to sp.getInt("btn_size", 58),
+                            "btn_alpha" to sp.getInt("btn_alpha", 100),
+                            "card_pos" to (sp.getString("card_pos", "top") ?: "top"),
+                            "card_alpha" to sp.getInt("card_alpha", 96),
+                            "bg" to (sp.getString("bg", "aurora") ?: "aurora")
+                        )
+                    )
+                }
+
+                "setUi" -> {
+                    val allowed = setOf(
+                        "btn_color", "btn_icon", "btn_size", "btn_alpha",
+                        "card_pos", "card_alpha", "bg"
+                    )
+                    val map = call.argument<Map<String, Any>>("ui")
+                    if (map != null) {
+                        val ed = getSharedPreferences("gasi", MODE_PRIVATE).edit()
+                        for ((k, v) in map) {
+                            if (k !in allowed) continue
+                            when (v) {
+                                is Int -> ed.putInt(k, v)
+                                is String -> ed.putString(k, v)
+                                else -> {}
+                            }
+                        }
+                        ed.apply()
+                        OverlayService.instance?.applyStyle()
+                    }
+                    result.success(null)
+                }
+
+                "resetUi" -> {
+                    val ed = getSharedPreferences("gasi", MODE_PRIVATE).edit()
+                    for (k in listOf(
+                        "btn_color", "btn_icon", "btn_size", "btn_alpha",
+                        "card_pos", "card_alpha", "bg"
+                    )) ed.remove(k)
+                    ed.apply()
+                    OverlayService.instance?.applyStyle()
+                    result.success(null)
+                }
+
                 "askApiKey" -> {
                     showKeyDialog()
                     result.success(null)
