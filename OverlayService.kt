@@ -28,6 +28,7 @@ import android.os.IBinder
 import android.os.Looper
 import android.util.Base64
 import android.view.Gravity
+import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
@@ -79,6 +80,9 @@ STEP 4 - CALIBRATE (very important)
 - If signals conflict, or the chart is choppy or sideways, stay between 45 and 55.
 - Do not simply follow the colour of the last candle. Check for exhaustion, long opposing wicks and nearby levels before following momentum.
 
+SPEED
+Respond quickly. Do not write long reasoning or explanations. Keep summary_reason to one short sentence (under 25 words). Output the JSON immediately.
+
 OUTPUT FORMAT
 Return ONLY this JSON object and nothing else:
 
@@ -87,7 +91,8 @@ Return ONLY this JSON object and nothing else:
 "down_probability_percent": 0,
 "technical_pattern": "Name of pattern",
 "market_sentiment": "Bullish / Bearish / Neutral",
-"summary_reason": "1-2 short lines naming the actual evidence you saw (chart evidence, plus the most relevant live market factor if you found one)."
+"summary_reason": "One short sentence (under 25 words) naming the actual evidence you saw.",
+"high_impact_news_soon": false
 }
 
 STRICT RULES
@@ -96,6 +101,7 @@ STRICT RULES
 - technical_pattern: only a pattern supported by visible evidence, otherwise "No clear classical pattern".
 - market_sentiment is exactly one of "Bullish", "Bearish", "Neutral". If live context is unavailable, use "Neutral".
 - summary_reason must refer to what is really visible on this chart (for example the last candles, a level, a wick), not generic statements.
+- high_impact_news_soon is a boolean: true only if the LIVE MARKET BRIEF names a major scheduled or breaking event within roughly the next hour, otherwise false.
 - Never fabricate prices, news or indicators that are not visible or verifiable.
 """
 
@@ -103,7 +109,7 @@ STRICT RULES
 Look at this trading chart screenshot.
 1) Identify the asset or currency pair and the chart timeframe.
 2) Use Google Search to research the CURRENT market for that asset: the latest news today, today's price trend, scheduled economic data or central bank events within the next hour, and the overall market sentiment.
-3) Reply in plain text only, maximum 120 words, in exactly this layout:
+3) Reply in plain text only, maximum 80 words, in exactly this layout (be fast):
 ASSET: ...
 NEWS AND TREND: ...
 UPCOMING EVENTS: ...
@@ -259,6 +265,53 @@ class GaugeView(
     }
 }
 
+// ============================================================
+// থিম / সাজসজ্জার সেটিংস (অ্যাপের "সাজসজ্জা" কার্ড থেকে আসে)
+// ============================================================
+class UiStyle(
+    val btnColor: Int,
+    val btnIcon: String,
+    val btnSize: Int,
+    val btnAlpha: Int,
+    val cardTop: Boolean,
+    val cardAlpha: Int
+)
+
+fun readStyle(ctx: Context): UiStyle {
+    val p = ctx.getSharedPreferences("gasi", Context.MODE_PRIVATE)
+    val col = try {
+        Color.parseColor(p.getString("btn_color", "#8B5CF6"))
+    } catch (e: Exception) {
+        Color.rgb(139, 92, 246)
+    }
+    return UiStyle(
+        col,
+        p.getString("btn_icon", "G") ?: "G",
+        p.getInt("btn_size", 58),
+        p.getInt("btn_alpha", 100),
+        (p.getString("card_pos", "top") ?: "top") == "top",
+        p.getInt("card_alpha", 96)
+    )
+}
+
+private fun lighten(c: Int): Int {
+    val hsv = FloatArray(3)
+    Color.colorToHSV(c, hsv)
+    hsv[1] = hsv[1] * 0.85f
+    hsv[2] = minOf(1f, hsv[2] * 1.2f + 0.05f)
+    return Color.HSVToColor(hsv)
+}
+
+private fun darken(c: Int): Int {
+    val hsv = FloatArray(3)
+    Color.colorToHSV(c, hsv)
+    hsv[2] = hsv[2] * 0.7f
+    return Color.HSVToColor(hsv)
+}
+
+private fun withAlpha(c: Int, a: Int): Int =
+    Color.argb(a, Color.red(c), Color.green(c), Color.blue(c))
+
 object ResultCard {
 
     private fun dp(c: Context, v: Int) = (v * c.resources.displayMetrics.density).toInt()
@@ -275,7 +328,7 @@ object ResultCard {
                 Color.argb(110, Color.red(color), Color.green(color), Color.blue(color))
             )
         }
-
+        
     private fun text(
         c: Context, s: String, size: Float, color: Int,
         bold: Boolean = false, center: Boolean = false
@@ -287,17 +340,24 @@ object ResultCard {
         if (center) gravity = Gravity.CENTER
     }
 
-    fun loading(c: Context, msg: String = "AI চার্ট বিশ্লেষণ করছে…"): View {
+    private fun banner(c: Context, msg: String, color: Int): TextView {
+        val b = text(c, msg, 12f, color, bold = true, center = true)
+        b.setPadding(dp(c, 10), dp(c, 8), dp(c, 10), dp(c, 8))
+        b.background = pill(c, color, 30)
+        return b
+    }
+
+    fun loading(c: Context, msg: String = "AI চার্ট বিশ্লেষণ করছে…", accent: Int = Color.rgb(139, 92, 246)): View {
         val tv = text(c, msg, 14f, Color.WHITE, bold = true, center = true)
         tv.setPadding(dp(c, 22), dp(c, 14), dp(c, 22), dp(c, 14))
         tv.background = GradientDrawable().apply {
             cornerRadius = dp(c, 30).toFloat()
             setColor(Color.argb(240, 20, 16, 28))
-            setStroke(dp(c, 1), Color.argb(120, 139, 92, 246))
+            setStroke(dp(c, 1), withAlpha(accent, 130))
         }
         return tv
     }
-    
+
     fun build(
         c: Context,
         up: Double,
@@ -307,6 +367,10 @@ object ResultCard {
         reason: String,
         web: Boolean,
         brief: String,
+        highNews: Boolean,
+        accent: Int,
+        cardAlpha: Int,
+        onFeedback: (Boolean) -> Unit,
         onClose: () -> Unit
     ): View {
         val root = LinearLayout(c).apply {
@@ -314,14 +378,14 @@ object ResultCard {
             setPadding(dp(c, 18), dp(c, 14), dp(c, 18), dp(c, 16))
             background = GradientDrawable().apply {
                 cornerRadius = dp(c, 26).toFloat()
-                setColor(Color.argb(246, 16, 13, 20))
-                setStroke(dp(c, 1), Color.argb(90, 139, 92, 246))
+                setColor(Color.argb(cardAlpha * 255 / 100, 16, 13, 20))
+                setStroke(dp(c, 1), withAlpha(accent, 110))
             }
         }
 
         val header = LinearLayout(c).apply { gravity = Gravity.CENTER_VERTICAL }
         header.addView(
-            text(c, "gasi candle analysis", 14f, C_LILAC, bold = true),
+            text(c, "gasi candle analysis", 14f, lighten(accent), bold = true),
             LinearLayout.LayoutParams(0, -2, 1f)
         )
         val close = text(c, "✕", 18f, Color.argb(200, 255, 255, 255), center = true)
@@ -344,6 +408,19 @@ object ResultCard {
             GaugeView(c, up.toFloat(), down.toFloat()),
             LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(c, 6) }
         )
+
+        if (highNews) {
+            root.addView(
+                banner(c, "⚠ বড় খবর কাছাকাছি — ঝুঁকি বেশি", C_RED),
+                LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(c, 8) }
+            )
+        }
+        if (maxOf(up, down) < 55.0) {
+            root.addView(
+                banner(c, "⚠ সংকেত দুর্বল — এই রাউন্ডে ট্রেড এড়ানো ভালো", C_AMBER),
+                LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(c, 8) }
+            )
+        }
 
         val sentColor = when (sentiment) {
             "Bullish" -> C_GREEN
@@ -371,6 +448,27 @@ object ResultCard {
             root.addView(b, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(c, 8) })
         }
 
+        val fbTitle = text(
+            c, "ট্রেডের পর: AI-র দিক কি মিলেছে?", 12f, Color.rgb(200, 195, 205), bold = true
+        )
+        root.addView(fbTitle, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(c, 12) })
+        val fbRow = LinearLayout(c).apply { orientation = LinearLayout.HORIZONTAL }
+        val okB = text(c, "✅ মিলেছে", 14f, C_GREEN, bold = true, center = true)
+        okB.setPadding(0, dp(c, 9), 0, dp(c, 9))
+        okB.background = pill(c, C_GREEN, 30)
+        val noB = text(c, "❌ মেলেনি", 14f, C_RED, bold = true, center = true)
+        noB.setPadding(0, dp(c, 9), 0, dp(c, 9))
+        noB.background = pill(c, C_RED, 30)
+        val done = {
+            fbTitle.text = "ধন্যবাদ, আপনার হিসাবে যোগ হয়েছে"
+            fbRow.visibility = View.GONE
+        }
+        okB.setOnClickListener { onFeedback(true); done() }
+        noB.setOnClickListener { onFeedback(false); done() }
+        fbRow.addView(okB, LinearLayout.LayoutParams(0, -2, 1f).apply { marginEnd = dp(c, 6) })
+        fbRow.addView(noB, LinearLayout.LayoutParams(0, -2, 1f).apply { marginStart = dp(c, 6) })
+        root.addView(fbRow, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(c, 6) })
+
         root.addView(
             text(c, "এটি অনুমান, নিশ্চিত ভবিষ্যদ্বাণী নয়।", 11f, Color.rgb(140, 133, 146)),
             LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(c, 10) }
@@ -384,6 +482,48 @@ object ResultCard {
 // Service
 // ============================================================
 class OverlayService : Service() {
+
+    companion object {
+        @Volatile
+        var instance: OverlayService? = null
+    }
+
+    private var buttonLp: WindowManager.LayoutParams? = null
+    
+    // অ্যাপ থেকে সেটিং বদলালে সাথে সাথে বাটনের রূপ বদলায়
+    fun applyStyle() {
+        handler.post {
+            val b = button ?: return@post
+            val st = readStyle(this)
+            paintButton(b, st)
+            buttonLp?.let {
+                val px = (st.btnSize * resources.displayMetrics.density).toInt()
+                it.width = px
+                it.height = px
+                try {
+                    wm.updateViewLayout(b, it)
+                } catch (_: Exception) {
+                }
+            }
+        }
+    }
+
+    private fun paintButton(tv: TextView, st: UiStyle) {
+        val d = resources.displayMetrics.density
+        val bg = GradientDrawable(
+            GradientDrawable.Orientation.TL_BR,
+            intArrayOf(lighten(st.btnColor), darken(st.btnColor))
+        )
+        bg.shape = GradientDrawable.OVAL
+        bg.setStroke((2 * d).toInt(), Color.argb(120, 255, 255, 255))
+        tv.background = bg
+        tv.text = st.btnIcon
+        tv.typeface = Typeface.DEFAULT_BOLD
+        tv.textSize = if (st.btnIcon.length > 1 && st.btnIcon.all { it.isLetter() }) 16f else 22f
+        tv.setTextColor(Color.WHITE)
+        tv.gravity = Gravity.CENTER
+        tv.alpha = st.btnAlpha / 100f
+    }
 
     private lateinit var wm: WindowManager
     private val handler = Handler(Looper.getMainLooper())
@@ -410,6 +550,7 @@ class OverlayService : Service() {
     override fun onCreate() {
         super.onCreate()
         wm = getSystemService(WINDOW_SERVICE) as WindowManager
+        instance = this
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -660,7 +801,7 @@ class OverlayService : Service() {
         }
         return "API " + r.first + ": " + m.take(160)
     }
-    
+
     // সাধারণ লেখা + ওয়েব সার্চ হয়েছিল কিনা
     private fun readText(resp: String): Pair<String, Boolean> {
         val cands = JSONObject(resp).optJSONArray("candidates")
@@ -676,7 +817,7 @@ class OverlayService : Service() {
         }
         return Pair(sb.toString().trim(), q != null && q.length() > 0)
     }
-
+    
     // উত্তর থেকে JSON অংশ আর finishReason
     private fun readReply(resp: String): Pair<String, String> {
         val cands = JSONObject(resp).optJSONArray("candidates")
@@ -795,8 +936,9 @@ class OverlayService : Service() {
                     val sent = j.optString("market_sentiment", "Neutral")
                     val why = j.optString("summary_reason", "")
                     val shown = if (fromCache) "(কিছুক্ষণ আগের) " + brief else brief
+                    val highNews = j.optBoolean("high_impact_news_soon", false)
 
-                    handler.post { showResult(up, down, pattern, sent, why, web, shown) }
+                    handler.post { showResult(up, down, pattern, sent, why, web, shown, highNews, minutes) }
 
                     // রেজাল্ট দেখানোর পর ব্যাকগ্রাউন্ডে ওয়েব তথ্য নতুন করে রাখা,
                     // যাতে পরের বার G চাপলে অপেক্ষা করতে না হয়
@@ -826,7 +968,7 @@ class OverlayService : Service() {
             }
         }
     }
-    
+
     // ---------- Share fallback (key না থাকলে) ----------
     private fun share(file: File) {
         try {
@@ -850,11 +992,12 @@ class OverlayService : Service() {
             toast("Share করা যায়নি: " + (e.message ?: ""))
         }
     }
-
+    
     // ---------- Result overlay ----------
     private fun showLoading(msg: String = "AI চার্ট বিশ্লেষণ করছে…") {
         clearResult()
-        val v = ResultCard.loading(this, msg)
+        val st = readStyle(this)
+        val v = ResultCard.loading(this, msg, st.btnColor)
         val lp = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -862,18 +1005,24 @@ class OverlayService : Service() {
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
             PixelFormat.TRANSLUCENT
         )
-        lp.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-        lp.y = 120
+        lp.gravity = (if (st.cardTop) Gravity.TOP else Gravity.BOTTOM) or Gravity.CENTER_HORIZONTAL
+        lp.y = if (st.cardTop) 120 else 160
         wm.addView(v, lp)
         resultView = v
     }
 
     private fun showResult(
         up: Double, down: Double, pattern: String, sent: String, why: String,
-        web: Boolean, brief: String
+        web: Boolean, brief: String, highNews: Boolean, minutes: Int
     ) {
         clearResult()
-        val card = ResultCard.build(this, up, down, pattern, sent, why, web, brief) { clearResult() }
+        val st = readStyle(this)
+        val card = ResultCard.build(
+            this, up, down, pattern, sent, why, web, brief, highNews,
+            st.btnColor, st.cardAlpha,
+            { hit -> recordFeedback(hit, minutes) },
+            { clearResult() }
+        )
         val lp = WindowManager.LayoutParams(
             (resources.displayMetrics.widthPixels * 0.92).toInt(),
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -881,10 +1030,24 @@ class OverlayService : Service() {
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
             PixelFormat.TRANSLUCENT
         )
-        lp.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-        lp.y = 100
+        lp.gravity = (if (st.cardTop) Gravity.TOP else Gravity.BOTTOM) or Gravity.CENTER_HORIZONTAL
+        lp.y = if (st.cardTop) 100 else 140
         wm.addView(card, lp)
         resultView = card
+    }
+
+    // ✅/❌ হিসাব ফোনে জমা রাখে (মোট ও প্রতি টাইমফ্রেম)
+    private fun recordFeedback(hit: Boolean, minutes: Int) {
+        val p = getSharedPreferences("gasi", MODE_PRIVATE)
+        val e = p.edit()
+        e.putInt("t_all", p.getInt("t_all", 0) + 1)
+        e.putInt("t_$minutes", p.getInt("t_$minutes", 0) + 1)
+        if (hit) {
+            e.putInt("h_all", p.getInt("h_all", 0) + 1)
+            e.putInt("h_$minutes", p.getInt("h_$minutes", 0) + 1)
+        }
+        e.apply()
+        toast(if (hit) "✅ যোগ হয়েছে" else "❌ যোগ হয়েছে")
     }
 
     private fun clearResult() {
@@ -901,17 +1064,11 @@ class OverlayService : Service() {
     private fun showButton() {
         if (button != null) return
 
-        val size = (58 * resources.displayMetrics.density).toInt()
-        val bg = GradientDrawable()
-        bg.shape = GradientDrawable.OVAL
-        bg.setColor(Color.rgb(139, 92, 246))
+        val st = readStyle(this)
+        val size = (st.btnSize * resources.displayMetrics.density).toInt()
 
         val tv = TextView(this)
-        tv.text = "G"
-        tv.textSize = 22f
-        tv.setTextColor(Color.WHITE)
-        tv.gravity = Gravity.CENTER
-        tv.background = bg
+        paintButton(tv, st)
 
         val lp = WindowManager.LayoutParams(
             size, size,
@@ -922,6 +1079,7 @@ class OverlayService : Service() {
         lp.gravity = Gravity.TOP or Gravity.START
         lp.x = 30
         lp.y = 300
+        buttonLp = lp
 
         var startX = 0
         var startY = 0
@@ -931,6 +1089,7 @@ class OverlayService : Service() {
         tv.setOnTouchListener { v, e ->
             when (e.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
+                    v.animate().scaleX(0.88f).scaleY(0.88f).setDuration(90).start()
                     startX = lp.x
                     startY = lp.y
                     touchX = e.rawX
@@ -944,9 +1103,15 @@ class OverlayService : Service() {
                     true
                 }
                 MotionEvent.ACTION_UP -> {
+                    v.animate().scaleX(1f).scaleY(1f).setDuration(120).start()
                     if (abs(e.rawX - touchX) < 15 && abs(e.rawY - touchY) < 15) {
+                        v.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
                         capture()
                     }
+                    true
+                }
+                MotionEvent.ACTION_CANCEL -> {
+                    v.animate().scaleX(1f).scaleY(1f).setDuration(120).start()
                     true
                 }
                 else -> false
@@ -967,6 +1132,7 @@ class OverlayService : Service() {
     }
 
     override fun onDestroy() {
+        instance = null
         clearResult()
         button?.let {
             try {
