@@ -194,6 +194,41 @@ class MainActivity : FlutterActivity() {
                     result.success(null)
                 }
 
+                "getData" -> {
+                    result.success(getSharedPreferences("gasi", MODE_PRIVATE).getBoolean("data", true))
+                }
+
+                "saveData" -> {
+                    val v = call.argument<Boolean>("data") ?: true
+                    getSharedPreferences("gasi", MODE_PRIVATE)
+                        .edit().putBoolean("data", v).apply()
+                    result.success(null)
+                }
+
+                "hasTdKey" -> {
+                    val k = getSharedPreferences("gasi", MODE_PRIVATE)
+                        .getString("td_key", "") ?: ""
+                    result.success(k.isNotEmpty())
+                }
+
+                "saveTdKey" -> {
+                    val k = call.argument<String>("key") ?: ""
+                    getSharedPreferences("gasi", MODE_PRIVATE)
+                        .edit().putString("td_key", k.trim()).apply()
+                    result.success(null)
+                }
+
+                "getOtc" -> {
+                    result.success(getSharedPreferences("gasi", MODE_PRIVATE).getBoolean("otc", false))
+                }
+
+                "saveOtc" -> {
+                    val v = call.argument<Boolean>("otc") ?: false
+                    getSharedPreferences("gasi", MODE_PRIVATE)
+                        .edit().putBoolean("otc", v).apply()
+                    result.success(null)
+                }
+
                 "askApiKey" -> {
                     showKeyDialog()
                     result.success(null)
