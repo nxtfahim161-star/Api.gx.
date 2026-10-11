@@ -7,6 +7,7 @@ import android.app.Service
 import android.content.ClipData
 import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
 import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
 import android.graphics.Canvas
@@ -42,10 +43,13 @@ import java.io.File
 import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
+import java.net.URLEncoder
+import java.util.Locale
 import kotlin.concurrent.thread
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.sin
+import kotlin.math.sqrt
 
 // ============================================================
 // AI Prompt
@@ -92,7 +96,8 @@ Return ONLY this JSON object and nothing else:
 "technical_pattern": "Name of pattern",
 "market_sentiment": "Bullish / Bearish / Neutral",
 "summary_reason": "One short sentence (under 25 words) naming the actual evidence you saw.",
-"high_impact_news_soon": false
+"high_impact_news_soon": false,
+"payout_percent": null
 }
 
 STRICT RULES
@@ -102,7 +107,28 @@ STRICT RULES
 - market_sentiment is exactly one of "Bullish", "Bearish", "Neutral". If live context is unavailable, use "Neutral".
 - summary_reason must refer to what is really visible on this chart (for example the last candles, a level, a wick), not generic statements.
 - high_impact_news_soon is a boolean: true only if the LIVE MARKET BRIEF names a major scheduled or breaking event within roughly the next hour, otherwise false.
+- payout_percent is the payout percentage shown on the screen for the traded asset (for example 93), or null if it is not visible. Never guess it.
 - Never fabricate prices, news or indicators that are not visible or verifiable.
+"""
+
+    const val DETECT = """
+Look at this trading chart screenshot and identify what is being traded. Return ONLY this JSON object:
+{"asset": "<symbol as displayed>", "market": "<one market value>", "timeframe_minutes": <number>}
+Rules:
+- asset: the symbol exactly as displayed on the screen, written as BASE/QUOTE for crypto and forex pairs, or as the ticker for stocks.
+- market: exactly one of "crypto", "forex", "stock", "otc", "unknown". Use "otc" if the name contains OTC or the instrument is shown as an OTC or synthetic pair. Use "unknown" if you cannot read it.
+- timeframe_minutes: the candle timeframe of the chart as a number of minutes (1, 5, 15, 30 or 60) if visible, otherwise 0.
+No other text.
+"""
+
+    const val RESEARCH_ASSET = """
+Use Google Search to research the CURRENT market for the asset named at the end: the latest news today, today's price trend, scheduled economic data or central bank events within the next hour, and the overall market sentiment.
+Reply in plain text only, maximum 80 words, in exactly this layout (be fast):
+ASSET: ...
+NEWS AND TREND: ...
+UPCOMING EVENTS: ...
+LIVE SENTIMENT: Bullish / Bearish / Neutral
+Do not predict the price. Do not invent anything. If you find nothing notable, write "nothing notable" for that line.
 """
 
     const val RESEARCH = """
@@ -138,7 +164,7 @@ class GaugeView(
 
     private val d = resources.displayMetrics.density
     private val pink = Color.rgb(252, 190, 212)
-
+    
     private val arc = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeCap = Paint.Cap.BUTT
@@ -165,7 +191,7 @@ class GaugeView(
         val height = cy + 0.5f * r + strokeFor() / 2 + 52 * d
         setMeasuredDimension(width, height.toInt())
     }
-    
+
     private fun pill(
         canvas: Canvas, text: String, left: Float, top: Float,
         bg: Int, size: Float, outlined: Boolean
@@ -266,6 +292,229 @@ class GaugeView(
 }
 
 // ============================================================
+// আসল বাজারের ক্যান্ডেল ডাটা + ইন্ডিকেটর হিসাব
+// ============================================================
+class Candle(val o: Double, val h: Double, val l: Double, val c: Double)
+
+object MarketData {
+
+    private fun httpGet(url: String): String? {
+        return try {
+            val con = URL(url).openConnection() as HttpURLConnection
+            con.connectTimeout = 8000
+            con.readTimeout = 8000
+            if (con.responseCode in 200..299) {
+                con.inputStream.bufferedReader().readText()
+            } else {
+                null
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    // ক্রিপ্টো: Binance (key লাগে না) | ফরেক্স/স্টক: Twelve Data (key লাগে)
+    fun fetch(market: String, asset: String, minutes: Int, tdKey: String): List<Candle>? {
+        return try {
+            val raw = asset.uppercase().replace(" ", "")
+            val out = ArrayList<Candle>()
+            if (market == "crypto") {
+                var pair = raw.replace("/", "").replace("-", "")
+                if (pair.endsWith("USD") && !pair.endsWith("BUSD")) pair += "T"
+                val iv = when (minutes) {
+                    1 -> "1m"
+                    5 -> "5m"
+                    15 -> "15m"
+                    30 -> "30m"
+                    60 -> "1h"
+                    else -> "5m"
+                }
+                val q = "/api/v3/klines?symbol=" + pair + "&interval=" + iv + "&limit=120"
+                val body = httpGet("https://data-api.binance.vision" + q)
+                    ?: httpGet("https://api.binance.com" + q)
+                    ?: return null
+                val arr = JSONArray(body)
+                for (i in 0 until arr.length()) {
+                    val k = arr.getJSONArray(i)
+                    out.add(
+                        Candle(
+                            k.getString(1).toDouble(), k.getString(2).toDouble(),
+                            k.getString(3).toDouble(), k.getString(4).toDouble()
+                        )
+                    )
+                }
+            } else {
+                var sym = raw
+                if (market == "forex" && !sym.contains("/") && sym.length == 6) {
+                    sym = sym.substring(0, 3) + "/" + sym.substring(3)
+                }
+                val iv = when (minutes) {
+                    1 -> "1min"
+                    5 -> "5min"
+                    15 -> "15min"
+                    30 -> "30min"
+                    60 -> "1h"
+                    else -> "5min"
+                }
+                val url = "https://api.twelvedata.com/time_series?symbol=" +
+                    URLEncoder.encode(sym, "UTF-8") + "&interval=" + iv +
+                    "&outputsize=120&apikey=" + tdKey
+                val body = httpGet(url) ?: return null
+                val vals = JSONObject(body).optJSONArray("values") ?: return null
+                for (i in vals.length() - 1 downTo 0) {
+                    val v = vals.getJSONObject(i)
+                    out.add(
+                        Candle(
+                            v.getString("open").toDouble(), v.getString("high").toDouble(),
+                            v.getString("low").toDouble(), v.getString("close").toDouble()
+                        )
+                    )
+                }
+            }
+            if (out.size >= 40) out else null
+        } catch (e: Exception) {
+            null
+        }
+    }
+    
+    private fun ema(v: List<Double>, p: Int): List<Double> {
+        val k = 2.0 / (p + 1)
+        val out = ArrayList<Double>()
+        var e = v[0]
+        for (x in v) {
+            e = x * k + e * (1 - k)
+            out.add(e)
+        }
+        return out
+    }
+
+    private fun rsi(v: List<Double>, p: Int): Double {
+        var g = 0.0
+        var l = 0.0
+        for (i in 1..p) {
+            val d = v[i] - v[i - 1]
+            if (d >= 0) g += d else l -= d
+        }
+        g /= p
+        l /= p
+        for (i in p + 1 until v.size) {
+            val d = v[i] - v[i - 1]
+            g = (g * (p - 1) + maxOf(d, 0.0)) / p
+            l = (l * (p - 1) + maxOf(-d, 0.0)) / p
+        }
+        return if (l == 0.0) 100.0 else 100.0 - 100.0 / (1.0 + g / l)
+    }
+
+    private fun f(x: Double): String {
+        val a = abs(x)
+        return when {
+            a >= 100 -> String.format(Locale.US, "%.2f", x)
+            a >= 1 -> String.format(Locale.US, "%.4f", x)
+            else -> String.format(Locale.US, "%.6f", x)
+        }
+    }
+
+    private fun f1(x: Double): String = String.format(Locale.US, "%.1f", x)
+
+    private fun shapes(k: Candle, p: Candle?): List<String> {
+        val out = ArrayList<String>()
+        val range = k.h - k.l
+        if (range <= 0.0) return out
+        val body = abs(k.c - k.o)
+        val upper = k.h - maxOf(k.o, k.c)
+        val lower = minOf(k.o, k.c) - k.l
+        if (body <= range * 0.1) {
+            out.add("doji")
+        } else {
+            if (lower >= body * 2 && upper <= body) out.add("hammer-shape (long lower wick)")
+            if (upper >= body * 2 && lower <= body) out.add("shooting-star-shape (long upper wick)")
+        }
+        if (p != null) {
+            if (p.c < p.o && k.c > k.o && k.o <= p.c && k.c >= p.o) out.add("bullish engulfing")
+            if (p.c > p.o && k.c < k.o && k.o >= p.c && k.c <= p.o) out.add("bearish engulfing")
+        }
+        return out
+    }
+
+    fun summary(c: List<Candle>, asset: String, tf: Int): String {
+        val n = c.size
+        val closes = c.map { it.c }
+        val last = c[n - 1]
+        val e9 = ema(closes, 9)
+        val e21 = ema(closes, 21)
+        val ml = ema(closes, 12).zip(ema(closes, 26)) { a, b -> a - b }
+        val sg = ema(ml, 9)
+        val hist = ml[n - 1] - sg[n - 1]
+        val histPrev = ml[n - 2] - sg[n - 2]
+        val r = rsi(closes, 14)
+
+        val w = closes.takeLast(20)
+        val mean = w.average()
+        val sd = sqrt(w.map { (it - mean) * (it - mean) }.average())
+        val bu = mean + 2 * sd
+        val bl = mean - 2 * sd
+        val pctB = if (bu - bl > 0) (last.c - bl) / (bu - bl) else 0.5
+
+        var atr = 0.0
+        for (i in n - 14 until n) {
+            atr += maxOf(
+                c[i].h - c[i].l,
+                abs(c[i].h - c[i - 1].c),
+                abs(c[i].l - c[i - 1].c)
+            )
+        }
+        atr /= 14
+
+        val rec = c.subList(n - 31, n - 1)
+        val res = rec.maxOf { it.h }
+        val sup = rec.minOf { it.l }
+
+        val range = last.h - last.l
+        val bodyPct = if (range > 0) abs(last.c - last.o) / range * 100 else 0.0
+        val upW = if (range > 0) (last.h - maxOf(last.o, last.c)) / range * 100 else 0.0
+        val loW = if (range > 0) (minOf(last.o, last.c) - last.l) / range * 100 else 0.0
+
+        val trend = when {
+            e9[n - 1] > e21[n - 1] * 1.0002 -> "UPTREND (EMA9 above EMA21)"
+            e9[n - 1] < e21[n - 1] * 0.9998 -> "DOWNTREND (EMA9 below EMA21)"
+            else -> "SIDEWAYS (EMA9 about equal to EMA21)"
+        }
+        val sb = StringBuilder()
+        sb.append("ASSET: ").append(asset).append(" | candle timeframe: ").append(tf)
+            .append("m | candles: ").append(n).append(" (oldest first, last one is still forming)\n")
+        sb.append("LAST 8 CANDLES (open, high, low, close):\n")
+        for (i in n - 8 until n) {
+            sb.append("  ").append(f(c[i].o)).append(", ").append(f(c[i].h)).append(", ")
+                .append(f(c[i].l)).append(", ").append(f(c[i].c)).append("\n")
+        }
+        sb.append("LAST CANDLE: ").append(if (last.c >= last.o) "bullish" else "bearish")
+            .append(", body ").append(f1(bodyPct)).append("% of range, upper wick ")
+            .append(f1(upW)).append("%, lower wick ").append(f1(loW)).append("%\n")
+        sb.append("TREND: ").append(trend).append("; EMA9=").append(f(e9[n - 1]))
+            .append(", EMA21=").append(f(e21[n - 1])).append("; price is ")
+            .append(if (last.c > e21[n - 1]) "above" else "below").append(" EMA21\n")
+        sb.append("RSI(14): ").append(f1(r)).append("\n")
+        sb.append("MACD(12,26,9): macd=").append(f(ml[n - 1])).append(", signal=")
+            .append(f(sg[n - 1])).append(", histogram=").append(f(hist)).append(" (")
+            .append(if (hist > histPrev) "rising" else "falling").append(")\n")
+        sb.append("BOLLINGER(20,2): upper=").append(f(bu)).append(", mid=").append(f(mean))
+            .append(", lower=").append(f(bl)).append("; %B=").append(f1(pctB * 100)).append("%\n")
+        sb.append("ATR(14): ").append(f(atr)).append("\n")
+        sb.append("RESISTANCE (30-candle high): ").append(f(res)).append(" (")
+            .append(f1((res - last.c) / (if (atr > 0) atr else 1.0))).append(" ATR away)\n")
+        sb.append("SUPPORT (30-candle low): ").append(f(sup)).append(" (")
+            .append(f1((last.c - sup) / (if (atr > 0) atr else 1.0))).append(" ATR away)\n")
+        val pNow = shapes(last, c[n - 2])
+        val pPrev = shapes(c[n - 2], c[n - 3])
+        sb.append("CANDLE SHAPES: last candle = ")
+            .append(if (pNow.isEmpty()) "none" else pNow.joinToString(", "))
+            .append("; previous candle = ")
+            .append(if (pPrev.isEmpty()) "none" else pPrev.joinToString(", ")).append("\n")
+        return sb.toString()
+    }
+}
+
+// ============================================================
 // থিম / সাজসজ্জার সেটিংস (অ্যাপের "সাজসজ্জা" কার্ড থেকে আসে)
 // ============================================================
 class UiStyle(
@@ -328,7 +577,7 @@ object ResultCard {
                 Color.argb(110, Color.red(color), Color.green(color), Color.blue(color))
             )
         }
-        
+
     private fun text(
         c: Context, s: String, size: Float, color: Int,
         bold: Boolean = false, center: Boolean = false
@@ -366,8 +615,10 @@ object ResultCard {
         sentiment: String,
         reason: String,
         web: Boolean,
+        live: Boolean,
         brief: String,
         highNews: Boolean,
+        payout: Double,
         accent: Int,
         cardAlpha: Int,
         onFeedback: (Boolean) -> Unit,
@@ -394,10 +645,15 @@ object ResultCard {
         header.addView(close, LinearLayout.LayoutParams(-2, -2))
         root.addView(header)
 
-        val webColor = if (web) C_GREEN else C_AMBER
+        val webColor = if (web || live) C_GREEN else C_AMBER
         val webChip = text(
             c,
-            if (web) "🌐 ওয়েব ও বইয়ের জ্ঞান মিলিয়ে" else "📖 শুধু চার্ট ও বইয়ের জ্ঞান",
+            when {
+                live && web -> "📊 আসল ক্যান্ডেল ডাটা + 🌐 ওয়েব"
+                live -> "📊 আসল ক্যান্ডেল ডাটা"
+                web -> "🌐 ওয়েব ও বইয়ের জ্ঞান মিলিয়ে"
+                else -> "📖 শুধু চার্ট ও বইয়ের জ্ঞান"
+            },
             11f, webColor, bold = true
         )
         webChip.setPadding(dp(c, 10), dp(c, 4), dp(c, 10), dp(c, 4))
@@ -415,7 +671,8 @@ object ResultCard {
                 LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(c, 8) }
             )
         }
-        if (maxOf(up, down) < 55.0) {
+        val weakLine = if (payout > 0) maxOf(55.0, 100.0 / (1.0 + payout / 100.0) + 2.0) else 55.0
+        if (maxOf(up, down) < weakLine) {
             root.addView(
                 banner(c, "⚠ সংকেত দুর্বল — এই রাউন্ডে ট্রেড এড়ানো ভালো", C_AMBER),
                 LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(c, 8) }
@@ -437,6 +694,19 @@ object ResultCard {
         chip.background = pill(c, sentColor, 30)
         info.addView(chip, LinearLayout.LayoutParams(-2, -2))
         root.addView(info, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(c, 14) })
+
+        if (payout > 0) {
+            val be = 100.0 / (1.0 + payout / 100.0)
+            root.addView(
+                text(
+                    c,
+                    "ব্রেক-ইভেন: " + pct(be) + "% (পেআউট " + pct(payout) +
+                        "%) — AI-র সম্ভাবনা এর নিচে হলে লোকসান",
+                    11f, Color.rgb(170, 165, 178)
+                ),
+                LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(c, 6) }
+            )
+        }
 
         val why = text(c, reason, 13f, Color.rgb(200, 195, 205))
         why.setLineSpacing(0f, 1.25f)
@@ -489,7 +759,7 @@ class OverlayService : Service() {
     }
 
     private var buttonLp: WindowManager.LayoutParams? = null
-    
+
     // অ্যাপ থেকে সেটিং বদলালে সাথে সাথে বাটনের রূপ বদলায়
     fun applyStyle() {
         handler.post {
@@ -542,6 +812,9 @@ class OverlayService : Service() {
     // একই অ্যাসেটে বারবার ওয়েব সার্চ না করতে ১০ মিনিট পর্যন্ত সারসংক্ষেপ মনে রাখে
     private var cachedBrief = ""
     private var cachedAt = 0L
+    private var cachedAsset = ""
+    @Volatile
+    private var otcDetected = false
     private var refreshing = false
     private val models = listOf("gemini-flash-latest", "gemini-3.5-flash", "gemini-3-flash-preview")
 
@@ -602,7 +875,7 @@ class OverlayService : Service() {
             startForeground(1001, n)
         }
     }
-
+    
     private fun setupProjection(code: Int, data: Intent) {
         val mpm = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         val p = mpm.getMediaProjection(code, data)
@@ -647,7 +920,7 @@ class OverlayService : Service() {
             r.surface, null, handler
         )
     }
-    
+
     private fun capture() {
         if (waiting) return
         waiting = true
@@ -716,15 +989,16 @@ class OverlayService : Service() {
         lowThink: Boolean,
         json: Boolean
     ): Pair<Int, String> {
-        val parts = JSONArray()
-            .put(JSONObject().put("text", prompt))
-            .put(
+        val parts = JSONArray().put(JSONObject().put("text", prompt))
+        if (b64.isNotEmpty()) {
+            parts.put(
                 JSONObject().put(
                     "inline_data", JSONObject()
                         .put("mime_type", "image/jpeg")
                         .put("data", b64)
                 )
             )
+        }
         val body = JSONObject()
             .put("contents", JSONArray().put(JSONObject().put("parts", parts)))
         if (withSearch) {
@@ -757,7 +1031,7 @@ class OverlayService : Service() {
             ?.bufferedReader()?.readText() ?: ""
         return Pair(code, text)
     }
-
+    
     // মডেল fallback + সার্ভার ব্যস্ত হলে retry। (code, body) ফেরত দেয়
     private fun request(
         key: String, b64: String, prompt: String, withSearch: Boolean,
@@ -817,7 +1091,7 @@ class OverlayService : Service() {
         }
         return Pair(sb.toString().trim(), q != null && q.length() > 0)
     }
-    
+
     // উত্তর থেকে JSON অংশ আর finishReason
     private fun readReply(resp: String): Pair<String, String> {
         val cands = JSONObject(resp).optJSONArray("candidates")
@@ -831,6 +1105,136 @@ class OverlayService : Service() {
         return Pair(json, finish)
     }
 
+    private fun readPayout(j: JSONObject): Double {
+        if (!j.has("payout_percent") || j.isNull("payout_percent")) return -1.0
+        val v = j.optDouble("payout_percent", -1.0)
+        return if (v in 1.0..200.0) v else -1.0
+    }
+
+    private fun horizonText(minutes: Int): String =
+        "\n\nFORECAST HORIZON: The UP and DOWN probabilities must describe the price " +
+            "direction over the NEXT " + minutes + " MINUTE" + (if (minutes == 1) "" else "S") +
+            " from the latest candle. Answer only for this horizon."
+
+    // আসল ডাটা পথ। true = রেজাল্ট/এরর দেখানো হয়েছে; false = স্ক্রিনশট পথে যাও
+    private fun tryDataPath(
+        key: String, b64: String, prefs: SharedPreferences, useWeb: Boolean, minutes: Int
+    ): Boolean {
+        // ধাপ ১: স্ক্রিনশট থেকে অ্যাসেট চেনা
+        val r0 = request(key, b64, AnalysisPrompt.DETECT.trimIndent(), false, true)
+        if (r0.first !in 200..299) return false
+        val det = readReply(r0.second).first
+        if (det.isEmpty()) return false
+        val d = try {
+            JSONObject(det)
+        } catch (e: Exception) {
+            return false
+        }
+        val market = d.optString("market", "unknown").lowercase()
+        val asset = d.optString("asset", "").trim()
+        if (market == "otc") otcDetected = true
+        if (asset.isEmpty() || market !in setOf("crypto", "forex", "stock")) return false
+        var tf = d.optInt("timeframe_minutes", 0)
+        if (tf !in setOf(1, 5, 15, 30, 60)) tf = if (minutes in setOf(1, 5, 15)) minutes else 5
+        val tdKey = prefs.getString("td_key", "") ?: ""
+        if (market != "crypto" && tdKey.isEmpty()) return false
+
+        handler.post { showLoading("আসল বাজারের ডাটা আনছে…") }
+
+        // ওয়েব সার্চ আলাদা থ্রেডে, ক্যান্ডেল ডাটা আনার সাথে একসাথে চলে
+        var brief = ""
+        var web = false
+        var worker: Thread? = null
+        if (useWeb) {
+            val fresh = System.currentTimeMillis() - cachedAt < 15 * 60 * 1000L
+            if (cachedBrief.isNotEmpty() && fresh && cachedAsset == asset) {
+                brief = cachedBrief
+                web = true
+            } else {
+                worker = thread {
+                    try {
+                        val rr = request(
+                            key, "",
+                            AnalysisPrompt.RESEARCH_ASSET.trimIndent() +
+                                "\n\nASSET TO RESEARCH: " + asset,
+                            true
+                        )
+                        if (rr.first in 200..299) {
+                            val tx = readText(rr.second)
+                            if (tx.second && tx.first.isNotEmpty()) {
+                                cachedBrief = tx.first
+                                cachedAt = System.currentTimeMillis()
+                                cachedAsset = asset
+                            }
+                        }
+                    } catch (_: Exception) {
+                    }
+                }
+            }
+        }
+
+        val candles = MarketData.fetch(market, asset, tf, tdKey) ?: return false
+
+        worker?.join(70000L)
+        if (worker != null && cachedAsset == asset && cachedBrief.isNotEmpty()) {
+            brief = cachedBrief
+            web = true
+        }
+
+        handler.post { showLoading("বিশ্লেষণ করছে…") }
+        val data = MarketData.summary(candles, asset, tf)
+        val liveCtx = when {
+            brief.isNotEmpty() ->
+                "\n\nLIVE MARKET BRIEF (gathered from Google Search):\n" + brief
+            useWeb ->
+                "\n\nLIVE MARKET BRIEF: unavailable. Use Neutral for market_sentiment."
+            else ->
+                "\n\nLIVE MARKET BRIEF: not requested (fast mode). Use Neutral for market_sentiment."
+        }
+        val prompt = "NOTE: No screenshot is attached. The exact numeric candle data below was " +
+            "fetched live from a market data API a moment ago; treat it as the chart and skip " +
+            "any step that needs reading an image.\n\n" +
+            AnalysisPrompt.TEXT.trimIndent() + horizonText(minutes) +
+            "\n\nMARKET DATA (exact numbers):\n" + data + liveCtx
+
+        var r = request(key, "", prompt, false, true)
+        if (r.first !in 200..299) {
+            handler.post { clearResult() }
+            toast(errorText(r), true)
+            return true
+        }
+        var rep = readReply(r.second)
+        if (rep.first.isEmpty()) {
+            r = request(key, "", prompt, false, true)
+            if (r.first in 200..299) rep = readReply(r.second)
+        }
+        if (rep.first.isEmpty()) {
+            handler.post { clearResult() }
+            toast("AI খালি উত্তর দিয়েছে (" + rep.second + "), আবার চাপুন", true)
+            return true
+        }
+        val j = JSONObject(rep.first)
+        var up = j.getDouble("up_probability_percent")
+        var down = j.getDouble("down_probability_percent")
+        val total = up + down
+        if (total > 0 && abs(total - 100.0) > 0.1) {
+            up = up / total * 100.0
+            down = 100.0 - up
+        }
+        val pattern = j.optString("technical_pattern", "No clear classical pattern")
+        val sent = j.optString("market_sentiment", "Neutral")
+        val why = j.optString("summary_reason", "")
+        val highNews = j.optBoolean("high_impact_news_soon", false)
+        val shownBrief = brief
+        val finalUp = up
+        val finalDown = down
+        val finalWeb = web
+        handler.post {
+            showResult(finalUp, finalDown, pattern, sent, why, finalWeb, shownBrief, highNews, minutes, true, -1.0)
+        }
+        return true
+    }
+    
     private fun analyze(file: File) {
         val prefs = getSharedPreferences("gasi", MODE_PRIVATE)
         val key = prefs.getString("key", "") ?: ""
@@ -840,13 +1244,22 @@ class OverlayService : Service() {
             return
         }
 
-        val useWeb = prefs.getBoolean("web", true)
+        val otcMode = prefs.getBoolean("otc", false)
+        var useWeb = prefs.getBoolean("web", true) && !otcMode
         showLoading(if (useWeb) "বাজারের তথ্য দেখছে…" else "AI চার্ট বিশ্লেষণ করছে…")
 
         thread {
             try {
                 val b64 = Base64.encodeToString(file.readBytes(), Base64.NO_WRAP)
                 val minutes = prefs.getInt("minutes", 5)
+
+                // আসল ক্যান্ডেল ডাটা পথ (ক্রিপ্টো/ফরেক্স/স্টক); না হলে স্ক্রিনশট পথ
+                otcDetected = false
+                if (prefs.getBoolean("data", true) && !otcMode) {
+                    if (tryDataPath(key, b64, prefs, useWeb, minutes)) return@thread
+                    // OTC দাম ব্রোকারের নিজস্ব, আসল খবরের সাথে মেলে না: ওয়েব সার্চ বাদ
+                    if (otcDetected) useWeb = false
+                }
                 val horizon = "\n\nFORECAST HORIZON: The UP and DOWN probabilities must describe " +
                     "the price direction over the NEXT " + minutes + " MINUTE" +
                     (if (minutes == 1) "" else "S") +
@@ -880,6 +1293,7 @@ class OverlayService : Service() {
                                 if (web) {
                                     brief = tx.first
                                     cachedBrief = brief
+                                    cachedAsset = ""
                                     cachedAt = System.currentTimeMillis()
                                 }
                             }
@@ -937,8 +1351,9 @@ class OverlayService : Service() {
                     val why = j.optString("summary_reason", "")
                     val shown = if (fromCache) "(কিছুক্ষণ আগের) " + brief else brief
                     val highNews = j.optBoolean("high_impact_news_soon", false)
+                    val payout = readPayout(j)
 
-                    handler.post { showResult(up, down, pattern, sent, why, web, shown, highNews, minutes) }
+                    handler.post { showResult(up, down, pattern, sent, why, web, shown, highNews, minutes, false, payout) }
 
                     // রেজাল্ট দেখানোর পর ব্যাকগ্রাউন্ডে ওয়েব তথ্য নতুন করে রাখা,
                     // যাতে পরের বার G চাপলে অপেক্ষা করতে না হয়
@@ -952,6 +1367,7 @@ class OverlayService : Service() {
                                 val tx = readText(rr.second)
                                 if (tx.second && tx.first.isNotEmpty()) {
                                     cachedBrief = tx.first
+                                    cachedAsset = ""
                                     cachedAt = System.currentTimeMillis()
                                 }
                             }
@@ -968,7 +1384,7 @@ class OverlayService : Service() {
             }
         }
     }
-
+    
     // ---------- Share fallback (key না থাকলে) ----------
     private fun share(file: File) {
         try {
@@ -992,7 +1408,7 @@ class OverlayService : Service() {
             toast("Share করা যায়নি: " + (e.message ?: ""))
         }
     }
-    
+
     // ---------- Result overlay ----------
     private fun showLoading(msg: String = "AI চার্ট বিশ্লেষণ করছে…") {
         clearResult()
@@ -1013,12 +1429,14 @@ class OverlayService : Service() {
 
     private fun showResult(
         up: Double, down: Double, pattern: String, sent: String, why: String,
-        web: Boolean, brief: String, highNews: Boolean, minutes: Int
+        web: Boolean, brief: String, highNews: Boolean, minutes: Int,
+        live: Boolean = false,
+        payout: Double = -1.0
     ) {
         clearResult()
         val st = readStyle(this)
         val card = ResultCard.build(
-            this, up, down, pattern, sent, why, web, brief, highNews,
+            this, up, down, pattern, sent, why, web, live, brief, highNews, payout,
             st.btnColor, st.cardAlpha,
             { hit -> recordFeedback(hit, minutes) },
             { clearResult() }
