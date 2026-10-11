@@ -1,7 +1,8 @@
 package com.example.gasi_candle_ai
 
-import android.app.AlertDialog
+import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.media.projection.MediaProjectionManager
 import android.net.Uri
@@ -9,8 +10,6 @@ import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
-import android.widget.EditText
-import android.widget.FrameLayout
 import androidx.core.content.ContextCompat
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -19,46 +18,11 @@ import io.flutter.plugin.common.MethodChannel
 class MainActivity : FlutterActivity() {
 
     private var pending: MethodChannel.Result? = null
-    private var keyDialog: AlertDialog? = null
-    private var askedOnce = false
 
-    private fun hasKey(): Boolean =
-        !(getSharedPreferences("gasi", MODE_PRIVATE).getString("key", "") ?: "").isEmpty()
+    private val timeframes = listOf(1, 5, 15, 30, 60, 120, 300)
 
-    // API key না থাকলে অ্যাপ খুললেই key বসানোর বক্স আসবে
-    private fun showKeyDialog() {
-        if (keyDialog?.isShowing == true) return
-        val dm = resources.displayMetrics.density
-        val input = EditText(this)
-        input.hint = "AIza..."
-        input.setSingleLine()
-        val pad = (20 * dm).toInt()
-        val box = FrameLayout(this)
-        box.setPadding(pad, pad / 2, pad, 0)
-        box.addView(input)
-        keyDialog = AlertDialog.Builder(this)
-            .setTitle("Gemini API key দিন")
-            .setMessage("aistudio.google.com/apikey থেকে key কপি করে এখানে বসান। key শুধু এই ফোনে থাকবে।")
-            .setView(box)
-            .setPositiveButton("সেভ") { _, _ ->
-                val k = input.text.toString().trim()
-                if (k.isNotEmpty()) {
-                    getSharedPreferences("gasi", MODE_PRIVATE)
-                        .edit().putString("key", k).apply()
-                }
-            }
-            .setNegativeButton("পরে", null)
-            .create()
-        keyDialog?.show()
-    }
-
-    override fun onResume() {
-        super.onResume()
-        if (!askedOnce && !hasKey()) {
-            askedOnce = true
-            showKeyDialog()
-        }
-    }
+    private fun prefs(): SharedPreferences =
+        getSharedPreferences("gasi", Context.MODE_PRIVATE)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -82,6 +46,7 @@ class MainActivity : FlutterActivity() {
         ).setMethodCallHandler { call, result ->
             when (call.method) {
 
+                // ---------- পারমিশন ----------
                 "hasOverlayPermission" ->
                     result.success(Settings.canDrawOverlays(this))
 
@@ -92,152 +57,6 @@ class MainActivity : FlutterActivity() {
                             Uri.parse("package:" + packageName)
                         )
                     )
-                    result.success(null)
-                }
-
-                "hasApiKey" -> {
-                    val k = getSharedPreferences("gasi", MODE_PRIVATE)
-                        .getString("key", "") ?: ""
-                    result.success(k.isNotEmpty())
-                }
-
-                "getMinutes" -> {
-                    val m = getSharedPreferences("gasi", MODE_PRIVATE).getInt("minutes", 5)
-                    result.success(m)
-                }
-
-                "saveMinutes" -> {
-                    val m = call.argument<Int>("minutes") ?: 5
-                    getSharedPreferences("gasi", MODE_PRIVATE)
-                        .edit().putInt("minutes", m).apply()
-                    result.success(null)
-                }
-
-                "getWeb" -> {
-                    result.success(getSharedPreferences("gasi", MODE_PRIVATE).getBoolean("web", true))
-                }
-
-                "saveWeb" -> {
-                    val v = call.argument<Boolean>("web") ?: true
-                    getSharedPreferences("gasi", MODE_PRIVATE)
-                        .edit().putBoolean("web", v).apply()
-                    result.success(null)
-                }
-
-                "getStats" -> {
-                    val sp = getSharedPreferences("gasi", MODE_PRIVATE)
-                    result.success(
-                        listOf(
-                            sp.getInt("t_all", 0), sp.getInt("h_all", 0),
-                            sp.getInt("t_1", 0), sp.getInt("h_1", 0),
-                            sp.getInt("t_5", 0), sp.getInt("h_5", 0),
-                            sp.getInt("t_15", 0), sp.getInt("h_15", 0)
-                        )
-                    )
-                }
-
-                "resetStats" -> {
-                    val ed = getSharedPreferences("gasi", MODE_PRIVATE).edit()
-                    for (k in listOf("all", "1", "5", "15")) {
-                        ed.remove("t_$k")
-                        ed.remove("h_$k")
-                    }
-                    ed.apply()
-                    result.success(null)
-                }
-
-                "getUi" -> {
-                    val sp = getSharedPreferences("gasi", MODE_PRIVATE)
-                    result.success(
-                        mapOf(
-                            "btn_color" to (sp.getString("btn_color", "#8B5CF6") ?: "#8B5CF6"),
-                            "btn_icon" to (sp.getString("btn_icon", "G") ?: "G"),
-                            "btn_size" to sp.getInt("btn_size", 58),
-                            "btn_alpha" to sp.getInt("btn_alpha", 100),
-                            "card_pos" to (sp.getString("card_pos", "top") ?: "top"),
-                            "card_alpha" to sp.getInt("card_alpha", 96),
-                            "bg" to (sp.getString("bg", "aurora") ?: "aurora")
-                        )
-                    )
-                }
-
-                "setUi" -> {
-                    val allowed = setOf(
-                        "btn_color", "btn_icon", "btn_size", "btn_alpha",
-                        "card_pos", "card_alpha", "bg"
-                    )
-                    val map = call.argument<Map<String, Any>>("ui")
-                    if (map != null) {
-                        val ed = getSharedPreferences("gasi", MODE_PRIVATE).edit()
-                        for ((k, v) in map) {
-                            if (k !in allowed) continue
-                            when (v) {
-                                is Int -> ed.putInt(k, v)
-                                is String -> ed.putString(k, v)
-                                else -> {}
-                            }
-                        }
-                        ed.apply()
-                        OverlayService.instance?.applyStyle()
-                    }
-                    result.success(null)
-                }
-
-                "resetUi" -> {
-                    val ed = getSharedPreferences("gasi", MODE_PRIVATE).edit()
-                    for (k in listOf(
-                        "btn_color", "btn_icon", "btn_size", "btn_alpha",
-                        "card_pos", "card_alpha", "bg"
-                    )) ed.remove(k)
-                    ed.apply()
-                    OverlayService.instance?.applyStyle()
-                    result.success(null)
-                }
-
-                "getData" -> {
-                    result.success(getSharedPreferences("gasi", MODE_PRIVATE).getBoolean("data", true))
-                }
-
-                "saveData" -> {
-                    val v = call.argument<Boolean>("data") ?: true
-                    getSharedPreferences("gasi", MODE_PRIVATE)
-                        .edit().putBoolean("data", v).apply()
-                    result.success(null)
-                }
-
-                "hasTdKey" -> {
-                    val k = getSharedPreferences("gasi", MODE_PRIVATE)
-                        .getString("td_key", "") ?: ""
-                    result.success(k.isNotEmpty())
-                }
-
-                "saveTdKey" -> {
-                    val k = call.argument<String>("key") ?: ""
-                    getSharedPreferences("gasi", MODE_PRIVATE)
-                        .edit().putString("td_key", k.trim()).apply()
-                    result.success(null)
-                }
-
-                "getOtc" -> {
-                    result.success(getSharedPreferences("gasi", MODE_PRIVATE).getBoolean("otc", false))
-                }
-
-                "saveOtc" -> {
-                    val v = call.argument<Boolean>("otc") ?: false
-                    getSharedPreferences("gasi", MODE_PRIVATE)
-                        .edit().putBoolean("otc", v).apply()
-                    result.success(null)
-                }
-
-                "askApiKey" -> {
-                    showKeyDialog()
-                    result.success(null)
-                }
-
-                "saveApiKey" -> {
-                    val k = call.argument<String>("key") ?: ""
-                    getSharedPreferences("gasi", MODE_PRIVATE)
-                        .edit().putString("key", k.trim()).apply()
                     result.success(null)
                 }
 
@@ -260,6 +79,160 @@ class MainActivity : FlutterActivity() {
                     result.success(null)
                 }
 
+                // ---------- প্রথমবারের ধাপ (চুক্তি, key) ----------
+                "getFlags" -> {
+                    val p = prefs()
+                    val hasKey = (p.getString("key", "") ?: "").isNotEmpty()
+                    result.success(
+                        mapOf(
+                            "agreed" to p.getBoolean("agreed", false),
+                            "setup_done" to (p.getBoolean("setup_done", false) || hasKey)
+                        )
+                    )
+                }
+
+                "saveFlag" -> {
+                    val name = call.argument<String>("name") ?: ""
+                    val value = call.argument<Boolean>("value") ?: true
+                    if (name == "agreed" || name == "setup_done") {
+                        prefs().edit().putBoolean(name, value).apply()
+                    }
+                    result.success(null)
+                }
+
+                // ---------- API key ----------
+                "hasApiKey" -> {
+                    val k = prefs().getString("key", "") ?: ""
+                    result.success(k.isNotEmpty())
+                }
+
+                "saveApiKey" -> {
+                    val k = call.argument<String>("key") ?: ""
+                    prefs().edit().putString("key", k.trim()).apply()
+                    result.success(null)
+                }
+
+                "hasTdKey" -> {
+                    val k = prefs().getString("td_key", "") ?: ""
+                    result.success(k.isNotEmpty())
+                }
+
+                "saveTdKey" -> {
+                    val k = call.argument<String>("key") ?: ""
+                    prefs().edit().putString("td_key", k.trim()).apply()
+                    result.success(null)
+                }
+
+                // ---------- পূর্বাভাসের সময় ও সুইচ ----------
+                "getMinutes" -> result.success(prefs().getInt("minutes", 5))
+
+                "saveMinutes" -> {
+                    val m = call.argument<Int>("minutes") ?: 5
+                    prefs().edit().putInt("minutes", m).apply()
+                    result.success(null)
+                }
+
+                "getWeb" -> result.success(prefs().getBoolean("web", true))
+                
+                "saveWeb" -> {
+                    val v = call.argument<Boolean>("web") ?: true
+                    prefs().edit().putBoolean("web", v).apply()
+                    result.success(null)
+                }
+
+                "getData" -> result.success(prefs().getBoolean("data", true))
+
+                "saveData" -> {
+                    val v = call.argument<Boolean>("data") ?: true
+                    prefs().edit().putBoolean("data", v).apply()
+                    result.success(null)
+                }
+
+                "getOtc" -> result.success(prefs().getBoolean("otc", false))
+
+                "saveOtc" -> {
+                    val v = call.argument<Boolean>("otc") ?: false
+                    prefs().edit().putBoolean("otc", v).apply()
+                    result.success(null)
+                }
+
+                // ---------- ✅/❌ হিসাব ----------
+                "getStats" -> {
+                    val sp = prefs()
+                    val list = ArrayList<Int>()
+                    list.add(sp.getInt("t_all", 0))
+                    list.add(sp.getInt("h_all", 0))
+                    for (tf in timeframes) {
+                        list.add(sp.getInt("t_$tf", 0))
+                        list.add(sp.getInt("h_$tf", 0))
+                    }
+                    result.success(list)
+                }
+
+                "resetStats" -> {
+                    val ed = prefs().edit()
+                    ed.remove("t_all")
+                    ed.remove("h_all")
+                    for (tf in timeframes) {
+                        ed.remove("t_$tf")
+                        ed.remove("h_$tf")
+                    }
+                    ed.apply()
+                    result.success(null)
+                }
+
+                // ---------- সাজসজ্জা ----------
+                "getUi" -> {
+                    val sp = prefs()
+                    result.success(
+                        mapOf(
+                            "btn_color" to (sp.getString("btn_color", "#8B5CF6") ?: "#8B5CF6"),
+                            "btn_icon" to (sp.getString("btn_icon", "G") ?: "G"),
+                            "btn_size" to sp.getInt("btn_size", 58),
+                            "btn_alpha" to sp.getInt("btn_alpha", 100),
+                            "card_pos" to (sp.getString("card_pos", "top") ?: "top"),
+                            "card_alpha" to sp.getInt("card_alpha", 96),
+                            "bg" to (sp.getString("bg", "aurora") ?: "aurora")
+                        )
+                    )
+                }
+
+                "setUi" -> {
+                    val allowed = setOf(
+                        "btn_color", "btn_icon", "btn_size", "btn_alpha",
+                        "card_pos", "card_alpha", "bg"
+                    )
+                    val map = call.argument<Map<String, Any>>("ui")
+                    if (map != null) {
+                        val ed = prefs().edit()
+                        for ((k, v) in map) {
+                            if (k !in allowed) continue
+                            when (v) {
+                                is Int -> ed.putInt(k, v)
+                                is String -> ed.putString(k, v)
+                                else -> {}
+                            }
+                        }
+                        ed.apply()
+                        OverlayService.instance?.applyStyle()
+                    }
+                    result.success(null)
+                }
+
+                "resetUi" -> {
+                    val ed = prefs().edit()
+                    for (k in listOf(
+                        "btn_color", "btn_icon", "btn_size", "btn_alpha",
+                        "card_pos", "card_alpha", "bg"
+                    )) {
+                        ed.remove(k)
+                    }
+                    ed.apply()
+                    OverlayService.instance?.applyStyle()
+                    result.success(null)
+                }
+
+                // ---------- ফ্লোটিং বাটন চালু/বন্ধ ----------
                 "startOverlay" -> {
                     if (!Settings.canDrawOverlays(this)) {
                         result.error("NO_PERMISSION", "Overlay permission নেই", null)
