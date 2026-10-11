@@ -28,7 +28,9 @@ BoxDecoration gasiBackground(String id) {
       stops: const [0.0, 0.5, 1.0],
     ),
   );
-}void main() {
+}
+
+void main() {
   WidgetsFlutterBinding.ensureInitialized();
   runApp(const GasiApp());
 }
@@ -77,7 +79,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     _refresh();
     _loadBg();
-  }Future<void> _loadBg() async {
+  }
+
+  Future<void> _loadBg() async {
     try {
       final u = await _ch.invokeMethod<Map<dynamic, dynamic>>('getUi');
       final b = u?['bg'];
@@ -148,9 +152,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       return;
     }
     setState(() => _result = r);
-  }
-
-  @override
+  }@override
   Widget build(BuildContext context) {
     const gap = SizedBox(height: 14);
     return Scaffold(
@@ -199,7 +201,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       ),
     );
   }
-}/// Gemini API key সেভ করা + ব্যাটারি সেটিংস খোলার কার্ড।
+}
+
+/// Gemini API key সেভ করা + ব্যাটারি সেটিংস খোলার কার্ড।
 class SetupCard extends StatefulWidget {
   const SetupCard({super.key});
 
@@ -211,6 +215,8 @@ class _SetupCardState extends State<SetupCard> with WidgetsBindingObserver {
   static const _ch = MethodChannel('gasi/native');
 
   final _c = TextEditingController();
+  final _td = TextEditingController();
+  bool _hasTd = false;
   bool _hasKey = false;
   bool _battery = false;
   bool _hide = true;
@@ -226,6 +232,7 @@ class _SetupCardState extends State<SetupCard> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _c.dispose();
+    _td.dispose();
     super.dispose();
   }
 
@@ -238,10 +245,12 @@ class _SetupCardState extends State<SetupCard> with WidgetsBindingObserver {
     try {
       final k = await _ch.invokeMethod<bool>('hasApiKey');
       final b = await _ch.invokeMethod<bool>('isBatteryUnrestricted');
+      final t = await _ch.invokeMethod<bool>('hasTdKey');
       if (mounted) {
         setState(() {
           _hasKey = k == true;
           _battery = b == true;
+          _hasTd = t == true;
         });
       }
     } catch (_) {}
@@ -262,12 +271,26 @@ class _SetupCardState extends State<SetupCard> with WidgetsBindingObserver {
     } catch (_) {}
   }
 
+  Future<void> _saveTd() async {
+    final k = _td.text.trim();
+    if (k.isEmpty) return;
+    try {
+      await _ch.invokeMethod('saveTdKey', {'key': k});
+      _td.clear();
+      await _load();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Twelve Data key সেভ হয়েছে')),
+        );
+      }
+    } catch (_) {}
+  }
+
   Future<void> _openBattery() async {
     try {
       await _ch.invokeMethod('openBatterySettings');
     } catch (_) {}
   }
-
   @override
   Widget build(BuildContext context) {
     final keyColor = _hasKey ? AppColors.green : AppColors.amber;
@@ -335,6 +358,56 @@ class _SetupCardState extends State<SetupCard> with WidgetsBindingObserver {
             ),
           ),
           const SizedBox(height: 16),
+          Row(
+            children: [
+              Icon(_hasTd ? Icons.check_circle : Icons.show_chart,
+                  size: 18, color: _hasTd ? AppColors.green : AppColors.amber),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  _hasTd ? 'Twelve Data key সেভ আছে' : 'Twelve Data key (ঐচ্ছিক)',
+                  style: const TextStyle(
+                      fontSize: 14, fontWeight: FontWeight.w700),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            'ফরেক্স ও স্টকের আসল ডাটার জন্য। twelvedata.com থেকে বিনামূল্যে key নিন। ক্রিপ্টোতে লাগে না।',
+            style: TextStyle(fontSize: 12, height: 1.4, color: Color(0xFF8F8993)),
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            controller: _td,
+            obscureText: true,
+            style: const TextStyle(fontSize: 13),
+            decoration: InputDecoration(
+              hintText: 'Twelve Data key',
+              filled: true,
+              fillColor: Colors.white.withOpacity(0.04),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(14),
+                borderSide: BorderSide.none,
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+          SizedBox(
+            width: double.infinity,
+            height: 42,
+            child: OutlinedButton(
+              onPressed: _saveTd,
+              style: OutlinedButton.styleFrom(
+                foregroundColor: AppColors.lilac,
+                side: BorderSide(color: AppColors.purple.withOpacity(0.4)),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14)),
+              ),
+              child: const Text('Key সেভ করুন'),
+            ),
+          ),
+          const SizedBox(height: 16),
           Divider(color: Colors.white.withOpacity(0.07), height: 1),
           const SizedBox(height: 14),
           Row(
@@ -374,19 +447,22 @@ class _SetupCardState extends State<SetupCard> with WidgetsBindingObserver {
       ),
     );
   }
-}/// কত মিনিটের পূর্বাভাস চাই (1 / 5 / 15) সেটা বাছাই করার কার্ড।
+}
+
+/// কত মিনিটের পূর্বাভাস চাই (1 / 5 / 15) সেটা বাছাই করার কার্ড।
 class TimeframeCard extends StatefulWidget {
   const TimeframeCard({super.key});
 
   @override
   State<TimeframeCard> createState() => _TimeframeCardState();
 }
-
 class _TimeframeCardState extends State<TimeframeCard> {
   static const _ch = MethodChannel('gasi/native');
   static const _options = [1, 5, 15];
   int _sel = 5;
   bool _web = true;
+  bool _data = true;
+  bool _otc = false;
 
   @override
   void initState() {
@@ -398,12 +474,30 @@ class _TimeframeCardState extends State<TimeframeCard> {
     try {
       final m = await _ch.invokeMethod<int>('getMinutes');
       final w = await _ch.invokeMethod<bool>('getWeb');
+      final dt = await _ch.invokeMethod<bool>('getData');
+      final ot = await _ch.invokeMethod<bool>('getOtc');
       if (mounted) {
         setState(() {
           if (m != null) _sel = m;
           if (w != null) _web = w;
+          if (dt != null) _data = dt;
+          if (ot != null) _otc = ot;
         });
       }
+    } catch (_) {}
+  }
+
+  Future<void> _toggleOtc(bool v) async {
+    setState(() => _otc = v);
+    try {
+      await _ch.invokeMethod('saveOtc', {'otc': v});
+    } catch (_) {}
+  }
+
+  Future<void> _toggleData(bool v) async {
+    setState(() => _data = v);
+    try {
+      await _ch.invokeMethod('saveData', {'data': v});
     } catch (_) {}
   }
 
@@ -518,12 +612,67 @@ class _TimeframeCardState extends State<TimeframeCard> {
               ),
             ],
           ),
+          const SizedBox(height: 4),
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('আসল ক্যান্ডেল ডাটা',
+                        style: TextStyle(
+                            fontSize: 14, fontWeight: FontWeight.w700)),
+                    const SizedBox(height: 2),
+                    Text(
+                      _data
+                          ? 'চালু: ক্রিপ্টো/ফরেক্স/স্টকে সংখ্যা দিয়ে নিখুঁত হিসাব (OTC-তে স্ক্রিনশট)'
+                          : 'বন্ধ: সবসময় স্ক্রিনশট দেখে বিশ্লেষণ',
+                      style: const TextStyle(
+                          fontSize: 12, color: Color(0xFF8F8993)),
+                    ),
+                  ],
+                ),
+              ),
+              Switch(
+                value: _data,
+                onChanged: _toggleData,
+                activeColor: AppColors.purple,
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('OTC মোড (সবচেয়ে দ্রুত)',
+                        style: TextStyle(
+                            fontSize: 14, fontWeight: FontWeight.w700)),
+                    const SizedBox(height: 2),
+                    Text(
+                      _otc
+                          ? 'চালু: ওয়েব ও আসল ডাটা বাদ, শুধু স্ক্রিনশট থেকে একবারেই উত্তর'
+                          : 'বন্ধ: অ্যাপ নিজে OTC চিনে ওয়েব সার্চ বাদ দেয়',
+                      style: const TextStyle(
+                          fontSize: 12, color: Color(0xFF8F8993)),
+                    ),
+                  ],
+                ),
+              ),
+              Switch(
+                value: _otc,
+                onChanged: _toggleOtc,
+                activeColor: AppColors.purple,
+              ),
+            ],
+          ),
         ],
       ),
     );
   }
 }
-
 /// AI-র সফলতার হার: কার্ডে ✅/❌ চেপে যোগ করা হিসাব থেকে।
 class StatsCard extends StatefulWidget {
   const StatsCard({super.key});
@@ -595,8 +744,7 @@ class _StatsCardState extends State<StatsCard> with WidgetsBindingObserver {
       ),
     );
   }
-
-  @override
+   @override
   Widget build(BuildContext context) {
     final total = _s[0];
     return Container(
@@ -752,7 +900,6 @@ class _AppearanceCardState extends State<AppearanceCard> {
                 fontWeight: FontWeight.w700,
                 color: Color(0xFFB9B3BF))),
       );
-
   @override
   Widget build(BuildContext context) {
     final base = _c(_color);
