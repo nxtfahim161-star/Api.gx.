@@ -86,7 +86,8 @@ class MainActivity : FlutterActivity() {
                     result.success(
                         mapOf(
                             "agreed" to p.getBoolean("agreed", false),
-                            "setup_done" to (p.getBoolean("setup_done", false) || hasKey)
+                            "setup_done" to (p.getBoolean("setup_done", false) || hasKey),
+                            "lang" to (p.getString("lang", "bn") ?: "bn")
                         )
                     )
                 }
@@ -97,6 +98,12 @@ class MainActivity : FlutterActivity() {
                     if (name == "agreed" || name == "setup_done") {
                         prefs().edit().putBoolean(name, value).apply()
                     }
+                    result.success(null)
+                }
+
+                "saveLang" -> {
+                    val l = call.argument<String>("lang") ?: "bn"
+                    prefs().edit().putString("lang", if (l == "en") "en" else "bn").apply()
                     result.success(null)
                 }
 
@@ -133,7 +140,7 @@ class MainActivity : FlutterActivity() {
                 }
 
                 "getWeb" -> result.success(prefs().getBoolean("web", true))
-                
+
                 "saveWeb" -> {
                     val v = call.argument<Boolean>("web") ?: true
                     prefs().edit().putBoolean("web", v).apply()
@@ -141,7 +148,7 @@ class MainActivity : FlutterActivity() {
                 }
 
                 "getData" -> result.success(prefs().getBoolean("data", true))
-
+                
                 "saveData" -> {
                     val v = call.argument<Boolean>("data") ?: true
                     prefs().edit().putBoolean("data", v).apply()
@@ -170,6 +177,7 @@ class MainActivity : FlutterActivity() {
                 }
 
                 "resetStats" -> {
+                    Store.resetOutcomes(this)
                     val ed = prefs().edit()
                     ed.remove("t_all")
                     ed.remove("h_all")
@@ -180,6 +188,23 @@ class MainActivity : FlutterActivity() {
                     ed.apply()
                     result.success(null)
                 }
+
+                // ---------- ইতিহাস ----------
+                "getHistory" -> result.success(Store.readHistory(this).toString())
+
+                "markHistory" -> {
+                    val id = (call.argument<Any>("id") as? Number)?.toLong() ?: 0L
+                    val hit = call.argument<Boolean>("hit") ?: false
+                    Store.setOutcome(this, id, hit)
+                    result.success(null)
+                }
+
+                "clearHistory" -> {
+                    Store.clearHistory(this)
+                    result.success(null)
+                }
+
+                "isRunning" -> result.success(OverlayService.instance != null)
 
                 // ---------- সাজসজ্জা ----------
                 "getUi" -> {
