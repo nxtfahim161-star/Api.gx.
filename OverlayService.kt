@@ -98,7 +98,8 @@ Return ONLY this JSON object and nothing else:
 "summary_reason": "One short sentence (under 25 words) naming the actual evidence you saw.",
 "high_impact_news_soon": false,
 "payout_percent": null,
-"chart_timeframe_minutes": null
+"chart_timeframe_minutes": null,
+"asset_name": null
 }
 
 STRICT RULES
@@ -108,6 +109,7 @@ STRICT RULES
 - market_sentiment is exactly one of "Bullish", "Bearish", "Neutral". If live context is unavailable, use "Neutral".
 - summary_reason must refer to what is really visible on this chart (for example the last candles, a level, a wick), not generic statements.
 - high_impact_news_soon is a boolean: true only if the LIVE MARKET BRIEF names a major scheduled or breaking event inside the forecast window (or within the next hour if the window is shorter than an hour), otherwise false.
+- asset_name is the instrument name shown on the screen (the pair or ticker, including the OTC label if it is written), or null if it is not visible. Never guess it.
 - chart_timeframe_minutes is the candle timeframe of the screenshot chart as a number of minutes (for example 1, 5, 15, 60), or null if it is not visible. Never guess it.
 - payout_percent is the payout percentage shown on the screen for the traded asset (for example 93), or null if it is not visible. Never guess it.
 - Never fabricate prices, news or indicators that are not visible or verifiable.
@@ -166,7 +168,7 @@ class GaugeView(
 
     private val d = resources.displayMetrics.density
     private val pink = Color.rgb(252, 190, 212)
-
+    
     private val arc = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeCap = Paint.Cap.BUTT
@@ -182,7 +184,7 @@ class GaugeView(
         typeface = Typeface.DEFAULT_BOLD
         strokeJoin = Paint.Join.ROUND
     }
-    
+
     private fun radiusFor(width: Int) = width * 0.38f
     private fun strokeFor() = 26 * d
 
@@ -267,7 +269,7 @@ class GaugeView(
         // মাঝের বড় সংখ্যা
         val isUp = up > down
         val big = if (up == down) "50%" else fmtPct(if (isUp) up else down) + "%"
-        val caption = if (up == down) "সমান" else if (isUp) "UP" else "DOWN"
+        val caption = if (up == down) tr(context, "সমান", "TIE") else if (isUp) "UP" else "DOWN"
         txt.style = Paint.Style.FILL
         txt.textSize = 30 * d
         txt.color = Color.WHITE
@@ -302,9 +304,18 @@ fun horizonLabel(m: Int): String {
     return m.toString() + (if (m == 1) " MINUTE" else " MINUTES")
 }
 
-fun tfLabelBn(m: Int): String {
-    if (m >= 60 && m % 60 == 0) return (m / 60).toString() + " ঘণ্টা"
-    return m.toString() + " মিনিট"
+// ভাষা বাছাই (অ্যাপের সেটিংস থেকে): "bn" = বাংলা, "en" = English
+fun tr(ctx: Context, bn: String, en: String): String {
+    val l = ctx.getSharedPreferences("gasi", Context.MODE_PRIVATE).getString("lang", "bn")
+    return if (l == "en") en else bn
+}
+
+fun tfLabel(ctx: Context, m: Int): String {
+    if (m >= 60 && m % 60 == 0) {
+        val h = m / 60
+        return tr(ctx, h.toString() + " ঘণ্টা", h.toString() + (if (h == 1) " hour" else " hours"))
+    }
+    return tr(ctx, m.toString() + " মিনিট", m.toString() + (if (m == 1) " minute" else " minutes"))
 }
 
 // আসল ডাটার জন্য পূর্বাভাসের সময় অনুযায়ী ক্যান্ডেলের আকার
@@ -537,6 +548,78 @@ object MarketData {
         return sb.toString()
     }
 }
+// ============================================================
+// ফলাফলের ইতিহাস ও ✅/❌ হিসাব (ফোনে জমা থাকে)
+// ============================================================
+object Store {
+    private fun p(ctx: Context): SharedPreferences =
+        ctx.getSharedPreferences("gasi", Context.MODE_PRIVATE)
+
+    fun readHistory(ctx: Context): JSONArray {
+        return try {
+            JSONArray(p(ctx).getString("history", "[]"))
+        } catch (e: Exception) {
+            JSONArray()
+        }
+    }
+
+    @Synchronized
+    fun addHistory(ctx: Context, entry: JSONObject) {
+        val old = readHistory(ctx)
+        val out = JSONArray()
+        out.put(entry)
+        for (i in 0 until minOf(old.length(), 99)) {
+            out.put(old.get(i))
+        }
+        p(ctx).edit().putString("history", out.toString()).apply()
+    }
+
+    @Synchronized
+    fun clearHistory(ctx: Context) {
+        p(ctx).edit().putString("history", "[]").apply()
+    }
+
+    // ফল বসানো বা বদলানো: ইতিহাসের সাথে মোট হিসাবও ঠিক রাখে
+    @Synchronized
+    fun setOutcome(ctx: Context, id: Long, hit: Boolean) {
+        val arr = readHistory(ctx)
+        for (i in 0 until arr.length()) {
+            val e = arr.getJSONObject(i)
+            if (e.optLong("id") != id) continue
+            val prev = e.optInt("hit", -1)
+            val now = if (hit) 1 else 0
+            if (prev == now) return
+            val tf = e.optInt("minutes", 5)
+            val sp = p(ctx)
+            val ed = sp.edit()
+            if (prev == -1) {
+                ed.putInt("t_all", sp.getInt("t_all", 0) + 1)
+                ed.putInt("t_$tf", sp.getInt("t_$tf", 0) + 1)
+            }
+            if (prev != 1 && now == 1) {
+                ed.putInt("h_all", sp.getInt("h_all", 0) + 1)
+                ed.putInt("h_$tf", sp.getInt("h_$tf", 0) + 1)
+            }
+            if (prev == 1 && now == 0) {
+                ed.putInt("h_all", maxOf(0, sp.getInt("h_all", 0) - 1))
+                ed.putInt("h_$tf", maxOf(0, sp.getInt("h_$tf", 0) - 1))
+            }
+            ed.apply()
+            e.put("hit", now)
+            p(ctx).edit().putString("history", arr.toString()).apply()
+            return
+        }
+    }
+
+    @Synchronized
+    fun resetOutcomes(ctx: Context) {
+        val arr = readHistory(ctx)
+        for (i in 0 until arr.length()) {
+            arr.getJSONObject(i).put("hit", -1)
+        }
+        p(ctx).edit().putString("history", arr.toString()).apply()
+    }
+}
 
 // ============================================================
 // থিম / সাজসজ্জার সেটিংস (অ্যাপের "সাজসজ্জা" কার্ড থেকে আসে)
@@ -612,7 +695,7 @@ object ResultCard {
         if (bold) typeface = Typeface.DEFAULT_BOLD
         if (center) gravity = Gravity.CENTER
     }
-
+    
     private fun banner(c: Context, msg: String, color: Int): TextView {
         val b = text(c, msg, 12f, color, bold = true, center = true)
         b.setPadding(dp(c, 10), dp(c, 8), dp(c, 10), dp(c, 8))
@@ -620,7 +703,11 @@ object ResultCard {
         return b
     }
 
-    fun loading(c: Context, msg: String = "AI চার্ট বিশ্লেষণ করছে…", accent: Int = Color.rgb(139, 92, 246)): View {
+    fun loading(
+        c: Context,
+        msg: String = tr(c, "AI চার্ট বিশ্লেষণ করছে…", "AI is analyzing the chart…"),
+        accent: Int = Color.rgb(139, 92, 246)
+    ): View {
         val tv = text(c, msg, 14f, Color.WHITE, bold = true, center = true)
         tv.setPadding(dp(c, 22), dp(c, 14), dp(c, 22), dp(c, 14))
         tv.background = GradientDrawable().apply {
@@ -674,10 +761,10 @@ object ResultCard {
         val webChip = text(
             c,
             when {
-                live && web -> "📊 আসল ক্যান্ডেল ডাটা + 🌐 ওয়েব"
-                live -> "📊 আসল ক্যান্ডেল ডাটা"
-                web -> "🌐 ওয়েব ও বইয়ের জ্ঞান মিলিয়ে"
-                else -> "📖 শুধু চার্ট ও বইয়ের জ্ঞান"
+                live && web -> tr(c, "📊 আসল ক্যান্ডেল ডাটা + 🌐 ওয়েব", "📊 Real candle data + 🌐 Web")
+                live -> tr(c, "📊 আসল ক্যান্ডেল ডাটা", "📊 Real candle data")
+                web -> tr(c, "🌐 ওয়েব ও বইয়ের জ্ঞান মিলিয়ে", "🌐 Web + book knowledge")
+                else -> tr(c, "📖 শুধু চার্ট ও বইয়ের জ্ঞান", "📖 Chart + book knowledge only")
             },
             11f, webColor, bold = true
         )
@@ -692,14 +779,14 @@ object ResultCard {
 
         if (highNews) {
             root.addView(
-                banner(c, "⚠ বড় খবর কাছাকাছি — ঝুঁকি বেশি", C_RED),
+                banner(c, tr(c, "⚠ বড় খবর কাছাকাছি — ঝুঁকি বেশি", "⚠ Major news is near — higher risk"), C_RED),
                 LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(c, 8) }
             )
         }
         val weakLine = if (payout > 0) maxOf(55.0, 100.0 / (1.0 + payout / 100.0) + 2.0) else 55.0
         if (maxOf(up, down) < weakLine) {
             root.addView(
-                banner(c, "⚠ সংকেত দুর্বল — এই রাউন্ডে ট্রেড এড়ানো ভালো", C_AMBER),
+                banner(c, tr(c, "⚠ সংকেত দুর্বল — এই রাউন্ডে ট্রেড এড়ানো ভালো", "⚠ Weak signal — better to skip this round"), C_AMBER),
                 LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(c, 8) }
             )
         }
@@ -732,8 +819,13 @@ object ResultCard {
             root.addView(
                 text(
                     c,
-                    "ব্রেক-ইভেন: " + pct(be) + "% (পেআউট " + pct(payout) +
-                        "%) — AI-র সম্ভাবনা এর নিচে হলে লোকসান",
+                    tr(
+                        c,
+                        "ব্রেক-ইভেন: " + pct(be) + "% (পেআউট " + pct(payout) +
+                            "%) — AI-র সম্ভাবনা এর নিচে হলে লোকসান",
+                        "Break-even: " + pct(be) + "% (payout " + pct(payout) +
+                            "%) — below this AI probability you lose"
+                    ),
                     11f, Color.rgb(170, 165, 178)
                 ),
                 LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(c, 6) }
@@ -745,24 +837,24 @@ object ResultCard {
         root.addView(why, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(c, 8) })
 
         if (brief.isNotEmpty()) {
-            val b = text(c, "🌐 লাইভ তথ্য: " + brief.take(320), 11f, Color.rgb(150, 178, 162))
+            val b = text(c, tr(c, "🌐 লাইভ তথ্য: ", "🌐 Live info: ") + brief.take(320), 11f, Color.rgb(150, 178, 162))
             b.setLineSpacing(0f, 1.25f)
             root.addView(b, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(c, 8) })
         }
 
         val fbTitle = text(
-            c, "ট্রেডের পর: AI-র দিক কি মিলেছে?", 12f, Color.rgb(200, 195, 205), bold = true
+            c, tr(c, "ট্রেডের পর: AI-র দিক কি মিলেছে?", "After the trade: did the AI direction match?"), 12f, Color.rgb(200, 195, 205), bold = true
         )
         root.addView(fbTitle, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(c, 12) })
         val fbRow = LinearLayout(c).apply { orientation = LinearLayout.HORIZONTAL }
-        val okB = text(c, "✅ মিলেছে", 14f, C_GREEN, bold = true, center = true)
+        val okB = text(c, tr(c, "✅ মিলেছে", "✅ Matched"), 14f, C_GREEN, bold = true, center = true)
         okB.setPadding(0, dp(c, 9), 0, dp(c, 9))
         okB.background = pill(c, C_GREEN, 30)
-        val noB = text(c, "❌ মেলেনি", 14f, C_RED, bold = true, center = true)
+        val noB = text(c, tr(c, "❌ মেলেনি", "❌ Missed"), 14f, C_RED, bold = true, center = true)
         noB.setPadding(0, dp(c, 9), 0, dp(c, 9))
         noB.background = pill(c, C_RED, 30)
         val done = {
-            fbTitle.text = "ধন্যবাদ, আপনার হিসাবে যোগ হয়েছে"
+            fbTitle.text = tr(c, "ধন্যবাদ, আপনার হিসাবে যোগ হয়েছে", "Thanks, added to your record")
             fbRow.visibility = View.GONE
         }
         okB.setOnClickListener { onFeedback(true); done() }
@@ -772,14 +864,13 @@ object ResultCard {
         root.addView(fbRow, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(c, 6) })
 
         root.addView(
-            text(c, "এটি অনুমান, নিশ্চিত ভবিষ্যদ্বাণী নয়।", 11f, Color.rgb(140, 133, 146)),
+            text(c, tr(c, "এটি অনুমান, নিশ্চিত ভবিষ্যদ্বাণী নয়।", "This is an estimate, not a guaranteed prediction."), 11f, Color.rgb(140, 133, 146)),
             LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(c, 10) }
         )
 
         return root
     }
 }
-
 // ============================================================
 // Service
 // ============================================================
@@ -871,7 +962,7 @@ class OverlayService : Service() {
         }
 
         if (data == null || code == Int.MIN_VALUE) {
-            toast("Capture permission পাওয়া যায়নি")
+            toast(tr(this, "Capture permission পাওয়া যায়নি", "Screen capture permission was not granted"))
             stopSelf()
             return START_NOT_STICKY
         }
@@ -880,7 +971,7 @@ class OverlayService : Service() {
             try {
                 setupProjection(code, data)
             } catch (e: Exception) {
-                toast("Capture শুরু হয়নি: " + (e.message ?: ""))
+                toast(tr(this, "Capture শুরু হয়নি: ", "Capture could not start: ") + (e.message ?: ""))
                 stopSelf()
                 return START_NOT_STICKY
             }
@@ -899,7 +990,7 @@ class OverlayService : Service() {
         val n = Notification.Builder(this, channelId)
             .setSmallIcon(android.R.drawable.ic_menu_camera)
             .setContentTitle("gasi candle analysis AI")
-            .setContentText("Floating G চালু আছে")
+            .setContentText(tr(this, "Floating G চালু আছে", "Floating G is on"))
             .setOngoing(true)
             .build()
         if (Build.VERSION.SDK_INT >= 29) {
@@ -908,7 +999,7 @@ class OverlayService : Service() {
             startForeground(1001, n)
         }
     }
-    
+
     private fun setupProjection(code: Int, data: Intent) {
         val mpm = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         val p = mpm.getMediaProjection(code, data)
@@ -953,7 +1044,7 @@ class OverlayService : Service() {
             r.surface, null, handler
         )
     }
-
+    
     private fun capture() {
         if (waiting) return
         waiting = true
@@ -969,7 +1060,7 @@ class OverlayService : Service() {
                 armed = false
                 waiting = false
                 button?.visibility = View.VISIBLE
-                toast("Screenshot নেওয়া যায়নি, আবার চাপুন")
+                toast(tr(this, "Screenshot নেওয়া যায়নি, আবার চাপুন", "Could not take the screenshot, tap again"))
             }
         }, 2500)
     }
@@ -1098,7 +1189,7 @@ class OverlayService : Service() {
         }
         return r
     }
-    
+
     private fun errorText(r: Pair<Int, String>): String {
         var m = ""
         try {
@@ -1124,7 +1215,7 @@ class OverlayService : Service() {
         }
         return Pair(sb.toString().trim(), q != null && q.length() > 0)
     }
-
+    
     // উত্তর থেকে JSON অংশ আর finishReason
     private fun readReply(resp: String): Pair<String, String> {
         val cands = JSONObject(resp).optJSONArray("candidates")
@@ -1137,6 +1228,9 @@ class OverlayService : Service() {
         val json = if (s >= 0 && e > s) raw.substring(s, e + 1) else ""
         return Pair(json, finish)
     }
+
+    private fun strOf(j: JSONObject, k: String): String =
+        if (!j.has(k) || j.isNull(k)) "" else j.optString(k, "").trim()
 
     private fun readPayout(j: JSONObject): Double {
         if (!j.has("payout_percent") || j.isNull("payout_percent")) return -1.0
@@ -1175,7 +1269,7 @@ class OverlayService : Service() {
         val tdKey = prefs.getString("td_key", "") ?: ""
         if (market != "crypto" && tdKey.isEmpty()) return false
 
-        handler.post { showLoading("আসল বাজারের ডাটা আনছে…") }
+        handler.post { showLoading(tr(this, "আসল বাজারের ডাটা আনছে…", "Fetching real market data…")) }
 
         // ওয়েব সার্চ আলাদা থ্রেডে, ক্যান্ডেল ডাটা আনার সাথে একসাথে চলে
         var brief = ""
@@ -1219,7 +1313,7 @@ class OverlayService : Service() {
             web = true
         }
 
-        handler.post { showLoading("বিশ্লেষণ করছে…") }
+        handler.post { showLoading(tr(this, "বিশ্লেষণ করছে…", "Analyzing…")) }
         val data = MarketData.summary(candles, asset, tf)
         val liveCtx = when {
             brief.isNotEmpty() ->
@@ -1248,7 +1342,7 @@ class OverlayService : Service() {
         }
         if (rep.first.isEmpty()) {
             handler.post { clearResult() }
-            toast("AI খালি উত্তর দিয়েছে (" + rep.second + "), আবার চাপুন", true)
+            toast(tr(this, "AI খালি উত্তর দিয়েছে (" + rep.second + "), আবার চাপুন", "The AI returned an empty answer (" + rep.second + "), tap again"), true)
             return true
         }
         val j = JSONObject(rep.first)
@@ -1268,7 +1362,7 @@ class OverlayService : Service() {
         val finalDown = down
         val finalWeb = web
         handler.post {
-            showResult(finalUp, finalDown, pattern, sent, why, finalWeb, shownBrief, highNews, minutes, true, -1.0)
+            showResult(finalUp, finalDown, pattern, sent, why, finalWeb, shownBrief, highNews, minutes, true, -1.0, "", asset)
         }
         return true
     }
@@ -1277,14 +1371,14 @@ class OverlayService : Service() {
         val prefs = getSharedPreferences("gasi", MODE_PRIVATE)
         val key = prefs.getString("key", "") ?: ""
         if (key.isEmpty()) {
-            toast("API key সেট করা নেই, Share খুলছে")
+            toast(tr(this, "API key সেট করা নেই, Share খুলছে", "No API key set, opening Share"))
             share(file)
             return
         }
 
         val otcMode = prefs.getBoolean("otc", false)
         var useWeb = prefs.getBoolean("web", true) && !otcMode
-        showLoading(if (useWeb) "বাজারের তথ্য দেখছে…" else "AI চার্ট বিশ্লেষণ করছে…")
+        showLoading(if (useWeb) tr(this, "বাজারের তথ্য দেখছে…", "Checking market info…") else tr(this, "AI চার্ট বিশ্লেষণ করছে…", "AI is analyzing the chart…"))
 
         thread {
             try {
@@ -1328,7 +1422,7 @@ class OverlayService : Service() {
                             web = true
                             fromCache = true
                         } else {
-                            handler.post { showLoading("ওয়েব থেকে বাজারের তথ্য নিচ্ছে…") }
+                            handler.post { showLoading(tr(this, "ওয়েব থেকে বাজারের তথ্য নিচ্ছে…", "Getting market info from the web…")) }
                             val r1 = request(key, b64, researchPrompt(minutes), true)
                             if (r1.first in 200..299) {
                                 val tx = readText(r1.second)
@@ -1343,7 +1437,7 @@ class OverlayService : Service() {
                         }
                     }
 
-                    handler.post { showLoading("বইয়ের জ্ঞান ও চার্ট মিলিয়ে বিশ্লেষণ করছে…") }
+                    handler.post { showLoading(tr(this, "বইয়ের জ্ঞান ও চার্ট মিলিয়ে বিশ্লেষণ করছে…", "Combining book knowledge and the chart…")) }
 
                     val live = when {
                         brief.isNotEmpty() ->
@@ -1370,7 +1464,7 @@ class OverlayService : Service() {
                     }
                     if (rep.first.isEmpty()) {
                         handler.post { clearResult() }
-                        toast("AI খালি উত্তর দিয়েছে (" + rep.second + "), আবার চাপুন", true)
+                        toast(tr(this, "AI খালি উত্তর দিয়েছে (" + rep.second + "), আবার চাপুন", "The AI returned an empty answer (" + rep.second + "), tap again"), true)
                         return@thread
                     }
                     val j = JSONObject(rep.first)
@@ -1392,9 +1486,10 @@ class OverlayService : Service() {
                     val pattern = j.optString("technical_pattern", "No clear classical pattern")
                     val sent = j.optString("market_sentiment", "Neutral")
                     val why = j.optString("summary_reason", "")
-                    val shown = if (fromCache) "(কিছুক্ষণ আগের) " + brief else brief
+                    val shown = if (fromCache) tr(this, "(কিছুক্ষণ আগের) ", "(a few minutes ago) ") + brief else brief
                     val highNews = j.optBoolean("high_impact_news_soon", false)
                     val payout = readPayout(j)
+                    val assetName = strOf(j, "asset_name")
                     val chartTf = if (j.has("chart_timeframe_minutes") &&
                         !j.isNull("chart_timeframe_minutes")
                     ) {
@@ -1403,14 +1498,21 @@ class OverlayService : Service() {
                         0
                     }
                     val hint = if (chartTf in 1..1440 && minutes / chartTf > 15) {
-                        "চার্ট " + tfLabelBn(chartTf) + "-এর, কিন্তু পূর্বাভাস " + tfLabelBn(minutes) +
-                            "-এর। ভালো ফলের জন্য " + tfLabelBn(candleTfFor(minutes)) +
-                            " টাইমফ্রেমের চার্টের স্ক্রিনশট নিন।"
+                        tr(
+                            this,
+                            "চার্ট " + tfLabel(this, chartTf) + "-এর, কিন্তু পূর্বাভাস " +
+                                tfLabel(this, minutes) + "-এর। ভালো ফলের জন্য " +
+                                tfLabel(this, candleTfFor(minutes)) +
+                                " টাইমফ্রেমের চার্টের স্ক্রিনশট নিন।",
+                            "The chart is " + tfLabel(this, chartTf) + " but the forecast is " +
+                                tfLabel(this, minutes) + ". For a better result, capture a " +
+                                tfLabel(this, candleTfFor(minutes)) + " timeframe chart."
+                        )
                     } else {
                         ""
                     }
 
-                    handler.post { showResult(up, down, pattern, sent, why, web, shown, highNews, minutes, false, payout, hint) }
+                    handler.post { showResult(up, down, pattern, sent, why, web, shown, highNews, minutes, false, payout, hint, assetName) }
 
                     // রেজাল্ট দেখানোর পর ব্যাকগ্রাউন্ডে ওয়েব তথ্য নতুন করে রাখা,
                     // যাতে পরের বার G চাপলে অপেক্ষা করতে না হয়
@@ -1441,7 +1543,7 @@ class OverlayService : Service() {
             }
         }
     }
-    
+
     // ---------- Share fallback (key না থাকলে) ----------
     private fun share(file: File) {
         try {
@@ -1455,19 +1557,19 @@ class OverlayService : Service() {
             send.clipData = ClipData.newRawUri("chart", uri)
             send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
 
-            val chooser = Intent.createChooser(send, "AI app বেছে নিন")
+            val chooser = Intent.createChooser(send, tr(this, "AI app বেছে নিন", "Choose an AI app"))
             chooser.addFlags(
                 Intent.FLAG_ACTIVITY_NEW_TASK or
                     Intent.FLAG_GRANT_READ_URI_PERMISSION
             )
             startActivity(chooser)
         } catch (e: Exception) {
-            toast("Share করা যায়নি: " + (e.message ?: ""))
+            toast(tr(this, "Share করা যায়নি: ", "Could not share: ") + (e.message ?: ""))
         }
     }
-
+    
     // ---------- Result overlay ----------
-    private fun showLoading(msg: String = "AI চার্ট বিশ্লেষণ করছে…") {
+    private fun showLoading(msg: String = tr(this, "AI চার্ট বিশ্লেষণ করছে…", "AI is analyzing the chart…")) {
         clearResult()
         val st = readStyle(this)
         val v = ResultCard.loading(this, msg, st.btnColor)
@@ -1489,14 +1591,34 @@ class OverlayService : Service() {
         web: Boolean, brief: String, highNews: Boolean, minutes: Int,
         live: Boolean = false,
         payout: Double = -1.0,
-        hint: String = ""
+        hint: String = "",
+        asset: String = ""
     ) {
         clearResult()
         val st = readStyle(this)
+        val id = System.currentTimeMillis()
+        try {
+            val e = JSONObject()
+            e.put("id", id)
+            e.put("asset", asset)
+            e.put("up", up)
+            e.put("down", down)
+            e.put("pattern", pattern)
+            e.put("sent", sent)
+            e.put("minutes", minutes)
+            e.put("mode", if (live) "live" else if (web) "web" else "chart")
+            e.put("payout", payout)
+            e.put("hit", -1)
+            Store.addHistory(this, e)
+        } catch (_: Exception) {
+        }
         val card = ResultCard.build(
             this, up, down, pattern, sent, why, web, live, brief, highNews, payout, hint,
             st.btnColor, st.cardAlpha,
-            { hit -> recordFeedback(hit, minutes) },
+            { hit ->
+                Store.setOutcome(this, id, hit)
+                toast(if (hit) tr(this, "✅ যোগ হয়েছে", "✅ Added") else tr(this, "❌ যোগ হয়েছে", "❌ Added"))
+            },
             { clearResult() }
         )
         val lp = WindowManager.LayoutParams(
@@ -1510,20 +1632,6 @@ class OverlayService : Service() {
         lp.y = if (st.cardTop) 100 else 140
         wm.addView(card, lp)
         resultView = card
-    }
-
-    // ✅/❌ হিসাব ফোনে জমা রাখে (মোট ও প্রতি টাইমফ্রেম)
-    private fun recordFeedback(hit: Boolean, minutes: Int) {
-        val p = getSharedPreferences("gasi", MODE_PRIVATE)
-        val e = p.edit()
-        e.putInt("t_all", p.getInt("t_all", 0) + 1)
-        e.putInt("t_$minutes", p.getInt("t_$minutes", 0) + 1)
-        if (hit) {
-            e.putInt("h_all", p.getInt("h_all", 0) + 1)
-            e.putInt("h_$minutes", p.getInt("h_$minutes", 0) + 1)
-        }
-        e.apply()
-        toast(if (hit) "✅ যোগ হয়েছে" else "❌ যোগ হয়েছে")
     }
 
     private fun clearResult() {
