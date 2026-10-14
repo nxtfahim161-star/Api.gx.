@@ -79,6 +79,33 @@ class MainActivity : FlutterActivity() {
                     result.success(null)
                 }
 
+                // ---------- ইন্টারনেট আছে কিনা ----------
+                "hasInternet" -> {
+                    Thread {
+                        var ok = false
+                        val urls = listOf(
+                            "https://www.google.com/generate_204",
+                            "https://generativelanguage.googleapis.com/"
+                        )
+                        for (u in urls) {
+                            try {
+                                val c = java.net.URL(u).openConnection() as java.net.HttpURLConnection
+                                c.connectTimeout = 4000
+                                c.readTimeout = 4000
+                                c.requestMethod = "GET"
+                                val code = c.responseCode
+                                c.disconnect()
+                                if (code in 200..499) {
+                                    ok = true
+                                    break
+                                }
+                            } catch (e: Exception) {
+                            }
+                        }
+                        runOnUiThread { result.success(ok) }
+                    }.start()
+                }
+
                 // ---------- প্রথমবারের ধাপ (চুক্তি, key) ----------
                 "getFlags" -> {
                     val p = prefs()
@@ -132,7 +159,7 @@ class MainActivity : FlutterActivity() {
 
                 // ---------- পূর্বাভাসের সময় ও সুইচ ----------
                 "getMinutes" -> result.success(prefs().getInt("minutes", 5))
-
+                
                 "saveMinutes" -> {
                     val m = call.argument<Int>("minutes") ?: 5
                     prefs().edit().putInt("minutes", m).apply()
@@ -148,7 +175,7 @@ class MainActivity : FlutterActivity() {
                 }
 
                 "getData" -> result.success(prefs().getBoolean("data", true))
-                
+
                 "saveData" -> {
                     val v = call.argument<Boolean>("data") ?: true
                     prefs().edit().putBoolean("data", v).apply()
@@ -299,3 +326,4 @@ class MainActivity : FlutterActivity() {
         }
     }
 }
+
