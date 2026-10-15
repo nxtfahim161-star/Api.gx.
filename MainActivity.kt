@@ -109,10 +109,11 @@ class MainActivity : FlutterActivity() {
                 // ---------- প্রথমবারের ধাপ (চুক্তি, key) ----------
                 "getFlags" -> {
                     val p = prefs()
-                    val hasKey = (p.getString("key", "") ?: "").isNotEmpty()
+                    val hasKey = Keys.gemini(this).isNotEmpty()
                     result.success(
                         mapOf(
                             "agreed" to p.getBoolean("agreed", false),
+                            "manual_seen" to p.getBoolean("manual_seen", false),
                             "setup_done" to (p.getBoolean("setup_done", false) || hasKey),
                             "lang" to (p.getString("lang", "bn") ?: "bn")
                         )
@@ -122,7 +123,7 @@ class MainActivity : FlutterActivity() {
                 "saveFlag" -> {
                     val name = call.argument<String>("name") ?: ""
                     val value = call.argument<Boolean>("value") ?: true
-                    if (name == "agreed" || name == "setup_done") {
+                    if (name == "agreed" || name == "setup_done" || name == "manual_seen") {
                         prefs().edit().putBoolean(name, value).apply()
                     }
                     result.success(null)
@@ -135,9 +136,29 @@ class MainActivity : FlutterActivity() {
                 }
 
                 // ---------- API key ----------
-                "hasApiKey" -> {
-                    val k = prefs().getString("key", "") ?: ""
-                    result.success(k.isNotEmpty())
+                "hasApiKey" -> result.success(Keys.gemini(this).isNotEmpty())
+
+                // key-র অবস্থা: নিজের দেওয়া (custom) নাকি বিল্ট-ইন ডিফল্ট
+                "getKeyInfo" -> {
+                    val p = prefs()
+                    result.success(
+                        mapOf(
+                            "gemini_custom" to (p.getString("key", "") ?: "").isNotEmpty(),
+                            "gemini_any" to Keys.gemini(this).isNotEmpty(),
+                            "td_custom" to (p.getString("td_key", "") ?: "").isNotEmpty(),
+                            "td_any" to Keys.twelve(this).isNotEmpty()
+                        )
+                    )
+                }
+
+                "resetApiKey" -> {
+                    prefs().edit().remove("key").apply()
+                    result.success(null)
+                }
+
+                "resetTdKey" -> {
+                    prefs().edit().remove("td_key").apply()
+                    result.success(null)
                 }
 
                 "saveApiKey" -> {
@@ -146,11 +167,8 @@ class MainActivity : FlutterActivity() {
                     result.success(null)
                 }
 
-                "hasTdKey" -> {
-                    val k = prefs().getString("td_key", "") ?: ""
-                    result.success(k.isNotEmpty())
-                }
-
+                "hasTdKey" -> result.success(Keys.twelve(this).isNotEmpty())
+                
                 "saveTdKey" -> {
                     val k = call.argument<String>("key") ?: ""
                     prefs().edit().putString("td_key", k.trim()).apply()
@@ -159,7 +177,7 @@ class MainActivity : FlutterActivity() {
 
                 // ---------- পূর্বাভাসের সময় ও সুইচ ----------
                 "getMinutes" -> result.success(prefs().getInt("minutes", 5))
-                
+
                 "saveMinutes" -> {
                     val m = call.argument<Int>("minutes") ?: 5
                     prefs().edit().putInt("minutes", m).apply()
@@ -326,4 +344,3 @@ class MainActivity : FlutterActivity() {
         }
     }
 }
-
