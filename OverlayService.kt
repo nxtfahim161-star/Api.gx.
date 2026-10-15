@@ -168,7 +168,7 @@ class GaugeView(
 
     private val d = resources.displayMetrics.density
     private val pink = Color.rgb(252, 190, 212)
-    
+
     private val arc = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeCap = Paint.Cap.BUTT
@@ -184,7 +184,7 @@ class GaugeView(
         typeface = Typeface.DEFAULT_BOLD
         strokeJoin = Paint.Join.ROUND
     }
-
+    
     private fun radiusFor(width: Int) = width * 0.38f
     private fun strokeFor() = 26 * d
 
@@ -548,6 +548,43 @@ object MarketData {
         return sb.toString()
     }
 }
+
+// ============================================================
+// API key: সেটিংসে বসানো key আগে, না থাকলে বিল্ডের সময় বসানো ডিফল্ট key
+// ============================================================
+object Keys {
+    private var cached: Pair<String, String>? = null
+
+    private fun defaults(ctx: Context): Pair<String, String> {
+        val c = cached
+        if (c != null) return c
+        var g = ""
+        var t = ""
+        try {
+            val lines = ctx.assets.open("keys.txt").bufferedReader().readLines()
+            g = (lines.getOrNull(0) ?: "").trim()
+            t = (lines.getOrNull(1) ?: "").trim()
+        } catch (e: Exception) {
+        }
+        val r = Pair(g, t)
+        cached = r
+        return r
+    }
+
+    private fun prefs(ctx: Context): SharedPreferences =
+        ctx.getSharedPreferences("gasi", Context.MODE_PRIVATE)
+
+    fun gemini(ctx: Context): String {
+        val k = prefs(ctx).getString("key", "") ?: ""
+        return if (k.isNotEmpty()) k else defaults(ctx).first
+    }
+
+    fun twelve(ctx: Context): String {
+        val k = prefs(ctx).getString("td_key", "") ?: ""
+        return if (k.isNotEmpty()) k else defaults(ctx).second
+    }
+}
+
 // ============================================================
 // ফলাফলের ইতিহাস ও ✅/❌ হিসাব (ফোনে জমা থাকে)
 // ============================================================
@@ -674,7 +711,7 @@ object ResultCard {
 
     private fun pct(v: Double): String =
         if (v % 1.0 == 0.0) v.toInt().toString() else String.format("%.1f", v)
-
+        
     private fun pill(c: Context, color: Int, alpha: Int): GradientDrawable =
         GradientDrawable().apply {
             cornerRadius = dp(c, 20).toFloat()
@@ -695,7 +732,7 @@ object ResultCard {
         if (bold) typeface = Typeface.DEFAULT_BOLD
         if (center) gravity = Gravity.CENTER
     }
-    
+
     private fun banner(c: Context, msg: String, color: Int): TextView {
         val b = text(c, msg, 12f, color, bold = true, center = true)
         b.setPadding(dp(c, 10), dp(c, 8), dp(c, 10), dp(c, 8))
@@ -871,6 +908,7 @@ object ResultCard {
         return root
     }
 }
+
 // ============================================================
 // Service
 // ============================================================
@@ -1191,6 +1229,13 @@ class OverlayService : Service() {
     }
 
     private fun errorText(r: Pair<Int, String>): String {
+        if (r.first == -1) {
+            return tr(
+                this,
+                "ইন্টারনেট সংযোগ নেই, আবার চেষ্টা করুন",
+                "No internet connection. Please try again."
+            )
+        }
         var m = ""
         try {
             m = JSONObject(r.second).getJSONObject("error").getString("message")
@@ -1266,7 +1311,7 @@ class OverlayService : Service() {
         if (market == "otc") otcDetected = true
         if (asset.isEmpty() || market !in setOf("crypto", "forex", "stock")) return false
         val tf = candleTfFor(minutes)
-        val tdKey = prefs.getString("td_key", "") ?: ""
+        val tdKey = Keys.twelve(this)
         if (market != "crypto" && tdKey.isEmpty()) return false
 
         handler.post { showLoading(tr(this, "আসল বাজারের ডাটা আনছে…", "Fetching real market data…")) }
@@ -1369,7 +1414,7 @@ class OverlayService : Service() {
     
     private fun analyze(file: File) {
         val prefs = getSharedPreferences("gasi", MODE_PRIVATE)
-        val key = prefs.getString("key", "") ?: ""
+        val key = Keys.gemini(this)
         if (key.isEmpty()) {
             toast(tr(this, "API key সেট করা নেই, Share খুলছে", "No API key set, opening Share"))
             share(file)
@@ -1539,11 +1584,25 @@ class OverlayService : Service() {
                 }
             } catch (e: Exception) {
                 handler.post { clearResult() }
-                toast("AI error: " + (e.message ?: ""), true)
+                val net = e is java.net.UnknownHostException ||
+                    e is java.net.ConnectException ||
+                    e is java.net.SocketTimeoutException
+                if (net) {
+                    toast(
+                        tr(
+                            this,
+                            "ইন্টারনেট সংযোগ নেই, আবার চেষ্টা করুন",
+                            "No internet connection. Please try again."
+                        ),
+                        true
+                    )
+                } else {
+                    toast("AI error: " + (e.message ?: ""), true)
+                }
             }
         }
     }
-
+    
     // ---------- Share fallback (key না থাকলে) ----------
     private fun share(file: File) {
         try {
@@ -1567,7 +1626,7 @@ class OverlayService : Service() {
             toast(tr(this, "Share করা যায়নি: ", "Could not share: ") + (e.message ?: ""))
         }
     }
-    
+
     // ---------- Result overlay ----------
     private fun showLoading(msg: String = tr(this, "AI চার্ট বিশ্লেষণ করছে…", "AI is analyzing the chart…")) {
         clearResult()
@@ -1734,3 +1793,4 @@ class OverlayService : Service() {
         super.onDestroy()
     }
 }
+
