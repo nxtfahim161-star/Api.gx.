@@ -55,6 +55,15 @@ jobs:
           cp AndroidManifest.xml android/app/src/main/AndroidManifest.xml
           cp file_paths.xml android/app/src/main/res/xml/file_paths.xml
 
+      - name: Add default API keys from GitHub Secrets
+        env:
+          GEMINI_KEY: ${{ secrets.GEMINI_KEY }}
+          TD_KEY: ${{ secrets.TD_KEY }}
+        run: |
+          A=android/app/src/main/assets
+          mkdir -p $A
+          printf '%s\n%s\n' "$GEMINI_KEY" "$TD_KEY" > $A/keys.txt
+
       - name: Android build fixes
         run: |
           D=android/app/src/main/kotlin/com/example/gasi_candle_ai
@@ -87,3 +96,4 @@ jobs:
           name: gasi-candle-analysis-ai
           path: build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
+          
