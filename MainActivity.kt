@@ -262,7 +262,8 @@ class MainActivity : FlutterActivity() {
                             "btn_alpha" to sp.getInt("btn_alpha", 100),
                             "card_pos" to (sp.getString("card_pos", "top") ?: "top"),
                             "card_alpha" to sp.getInt("card_alpha", 96),
-                            "bg" to (sp.getString("bg", "aurora") ?: "aurora")
+                            "bg" to (sp.getString("bg", "aurora") ?: "aurora"),
+"card_style" to (sp.getString("card_style", "full") ?: "full")
                         )
                     )
                 }
