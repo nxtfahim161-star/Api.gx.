@@ -3163,7 +3163,7 @@ class SettingsScreen extends StatefulWidget {
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
-}class _SettingsScreenState extends State<SettingsScreen>
+class _OldSettingsScreenState extends State<SettingsScreen>
     with LangAware<SettingsScreen> {
   @override
   Widget build(BuildContext context) {
