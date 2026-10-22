@@ -4346,3 +4346,235 @@ class AppearanceCard extends StatefulWidget {
     );
   }
 }
+// ============================================================
+// পার্ট ১: "WELCOME, TO AI ANALYSIS" টাইপরাইটার ওয়েলকাম স্ক্রিন
+//
+// কীভাবে বসাবেন:
+//  ধাপ ১) এই ফাইলের সবটুকু home_screen.dart-এর একদম শেষে বসান।
+//  ধাপ ২) home_screen.dart-এ এই লাইনটা খুঁজুন (Gate ক্লাসের ভেতরে):
+//           page = const SplashScreen(key: ValueKey('splash'));
+//         এবং বদলে লিখুন:
+//           page = const WelcomeScreen(key: ValueKey('splash'));
+//  নতুন কোনো প্যাকেজ বা workflow বদল লাগবে না।
+//
+// সময়রেখা:
+//   0.0–0.8s  প্রায় কালো স্ক্রিন থেকে ধীরে 3D টাইল দেখা যায়
+//   0.8s থেকে প্রতি 100ms-এ একটা করে অক্ষর (স্পেসেও 100ms, কিন্তু স্পেসে সাউন্ড নেই)
+//   টাইপ শেষে 500ms অপেক্ষা, তারপর কার্সর মিলিয়ে যায় এবং 800ms নিয়ন গ্লো পালস
+//   তারপর লেখা স্থির থাকে (Gate নিজের সময়ে পরের স্ক্রিনে নিয়ে যায়)
+// ============================================================
+
+class WelcomeScreen extends StatefulWidget {
+  const WelcomeScreen({super.key});
+
+  @override
+  State<WelcomeScreen> createState() => _WelcomeScreenState();
+}
+
+class _WelcomeScreenState extends State<WelcomeScreen>
+    with TickerProviderStateMixin {
+  static const String _text = 'WELCOME, TO AI ANALYSIS';
+  static const Color _pink = Color(0xFFFF3DCB);
+  static const Color _violet = Color(0xFF8B5CF6);
+
+  late final AnimationController _wave; // পেছনের টাইলের ধীর ঢেউ
+  late final AnimationController _reveal; // শুরুর 0.8s ফেড-ইন
+  late final AnimationController _type; // 100ms x অক্ষর সংখ্যা
+  late final AnimationController _blink; // কার্সর ব্লিঙ্ক (500ms জ্বলে, 500ms নেভে)
+  late final AnimationController _cursorFade; // টাইপ শেষে কার্সর মিলিয়ে যাওয়া
+  late final AnimationController _glow; // 800ms গ্লো পালস
+
+  int _shown = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _wave = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 120),
+    )..repeat();
+    _reveal = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 800),
+    );
+    _type = AnimationController(
+      vsync: this,
+      duration: Duration(milliseconds: 100 * _text.length),
+    );
+    _blink = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1000),
+    )..repeat();
+    _cursorFade = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 300),
+    );
+    _glow = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 800),
+    );
+    _type.addListener(_onType);
+    _run();
+  }
+
+  /// একটার পর একটা ধাপ চালায়।
+  Future<void> _run() async {
+    await _reveal.forward();
+    if (!mounted) return;
+    await _type.forward();
+    if (!mounted) return;
+    await Future<void>.delayed(const Duration(milliseconds: 500));
+    if (!mounted) return;
+    _cursorFade.forward();
+    await _glow.forward();
+  }
+
+  /// প্রতি 100ms-এ নতুন অক্ষর দেখায়; স্পেস ছাড়া প্রতি অক্ষরে একটা ছোট ট্যাপ সাউন্ড।
+  void _onType() {
+    int n = (_type.value * _text.length).floor() + 1;
+    if (n > _text.length) n = _text.length;
+    if (n <= _shown) return;
+    _shown = n;
+    if (_text[n - 1] != ' ') {
+      // ডিভাইসের টাচ-সাউন্ড সেটিং মেনে চলে। নীরব থাকলে কিছুই বাজে না।
+      SystemSound.play(SystemSoundType.click);
+    }
+  }
+
+  @override
+  void dispose() {
+    _type.removeListener(_onType);
+    _wave.dispose();
+    _reveal.dispose();
+    _type.dispose();
+    _blink.dispose();
+    _cursorFade.dispose();
+    _glow.dispose();
+    super.dispose();
+  }
+
+  Widget _buildText() {
+    return AnimatedBuilder(
+      animation: Listenable.merge([_type, _blink, _cursorFade, _glow]),
+      builder: (context, _) {
+        final pulse = _gSin(kPi * _glow.value); // 0 -> 1 -> 0
+        final blinkOn = _blink.value < 0.5;
+        final cursorAlpha = blinkOn ? (1.0 - _cursorFade.value) : 0.0;
+
+        const base = TextStyle(
+          fontSize: 27,
+          fontWeight: FontWeight.w900,
+          letterSpacing: 2.2,
+          height: 1.35,
+        );
+        final shown = base.copyWith(
+          color: Colors.white,
+          shadows: [
+            Shadow(
+              color: _pink.withOpacity(0.35 + 0.55 * pulse),
+              blurRadius: 14 + 22 * pulse,
+            ),
+            Shadow(
+              color: _violet.withOpacity(0.45 + 0.4 * pulse),
+              blurRadius: 26 + 24 * pulse,
+            ),
+          ],
+        );
+        // যে অক্ষর এখনো আসেনি সেগুলো স্বচ্ছ, তাই লেখা বাড়লে লেআউট নড়ে না।
+        final hidden = base.copyWith(color: Colors.transparent);
+        final cursor = base.copyWith(
+          color: _pink.withOpacity(cursorAlpha),
+          fontWeight: FontWeight.w300,
+        );
+
+        return RichText(
+          textAlign: TextAlign.center,
+          text: TextSpan(
+            children: [
+              TextSpan(text: _text.substring(0, _shown), style: shown),
+              TextSpan(text: '|', style: cursor),
+              TextSpan(text: _text.substring(_shown), style: hidden),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.transparent,
+      body: GasiBackground(
+        child: Stack(
+          children: [
+            Positioned.fill(
+              child: RepaintBoundary(
+                child: AnimatedBuilder(
+                  animation: _wave,
+                  builder: (context, _) {
+                    return CustomPaint(
+                      painter: TileWavePainter(_wave.value * 120.0),
+                    );
+                  },
+                ),
+              ),
+            ),
+            Positioned.fill(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: RadialGradient(
+                    radius: 0.85,
+                    colors: [
+                      const Color(0xFF0B0A0E).withOpacity(0.55),
+                      const Color(0xFF0B0A0E).withOpacity(0.86),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            Center(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 96,
+                      height: 96,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        boxShadow: [
+                          BoxShadow(
+                            color: _violet.withOpacity(0.45),
+                            blurRadius: 30,
+                            spreadRadius: 2,
+                          ),
+                        ],
+                      ),
+                      child: ClipOval(child: gxLogo(96)),
+                    ),
+                    const SizedBox(height: 30),
+                    _buildText(),
+                  ],
+                ),
+              ),
+            ),
+            // শুরুতে প্রায় কালো স্ক্রিন, 0.8s-এ ধীরে ধীরে সরে যায়।
+            Positioned.fill(
+              child: IgnorePointer(
+                child: AnimatedBuilder(
+                  animation: _reveal,
+                  builder: (context, _) {
+                    final a = 1.0 - Curves.easeOut.transform(_reveal.value);
+                    return ColoredBox(color: Colors.black.withOpacity(a));
+                  },
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
