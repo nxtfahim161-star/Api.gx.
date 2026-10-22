@@ -1047,7 +1047,7 @@ class GlobePainter extends CustomPainter {
 
     final ca = _gCos(m.angle);
     final sa = _gSin(m.angle);
-    const tilt = 0.38;
+    final double tilt = 0.46 + 0.07 * _gSin(m.time * 0.32);
     final ct = _gCos(tilt);
     final st = _gSin(tilt);
 
