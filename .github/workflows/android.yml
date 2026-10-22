@@ -67,6 +67,8 @@ jobs:
       - name: Android build fixes
         run: |
           D=android/app/src/main/kotlin/com/example/gasi_candle_ai
+          cp KeySound.kt $D/KeySound.kt
+          grep -q KeySound $D/MainActivity.kt || sed -i 's/super.configureFlutterEngine(flutterEngine)/super.configureFlutterEngine(flutterEngine)\n        KeySound.register(flutterEngine)/' $D/MainActivity.kt
           sed -i 's/val p = mpm.getMediaProjection(code, data)/val p = mpm.getMediaProjection(code, data) ?: throw IllegalStateException("MediaProjection null")/' $D/OverlayService.kt
           grep -n "getMediaProjection" $D/OverlayService.kt || true
           if [ -f android/app/build.gradle.kts ]; then
