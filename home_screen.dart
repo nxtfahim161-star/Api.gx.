@@ -4437,7 +4437,11 @@ class _WelcomeScreenState extends State<WelcomeScreen>
     _shown = n;
     if (_text[n - 1] != ' ') {
       // ডিভাইসের টাচ-সাউন্ড সেটিং মেনে চলে। নীরব থাকলে কিছুই বাজে না।
-      SystemSound.play(SystemSoundType.click);
+      const MethodChannel('gasi/keysound')
+    .invokeMethod<void>('tap')
+    .catchError((Object _) {
+  SystemSound.play(SystemSoundType.click);
+});
     }
   }
 
