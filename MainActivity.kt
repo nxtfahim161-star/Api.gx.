@@ -270,7 +270,7 @@ class MainActivity : FlutterActivity() {
                 "setUi" -> {
                     val allowed = setOf(
                         "btn_color", "btn_icon", "btn_size", "btn_alpha",
-                        "card_pos", "card_alpha", "bg"
+                        "card_pos", "card_alpha", "bg", "card_style"
                     )
                     val map = call.argument<Map<String, Any>>("ui")
                     if (map != null) {
