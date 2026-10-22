@@ -335,7 +335,7 @@ class _GateState extends State<Gate> {
     Widget page = const SizedBox.shrink();
     switch (_step) {
       case GateStep.loading:
-        page = const SplashScreen(key: ValueKey('splash'));
+        page = const WelcomeScreen(key: ValueKey('splash'));
         break;
       case GateStep.offline:
         page = OfflineScreen(key: const ValueKey('offline'), onRetry: _retry);
