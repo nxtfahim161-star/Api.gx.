@@ -4109,6 +4109,7 @@ class AppearanceCard extends StatefulWidget {
         _pos = (u['card_pos'] as String?) ?? _pos;
         _cardAlpha = (u['card_alpha'] as num?)?.toInt() ?? _cardAlpha;
         _bg = (u['bg'] as String?) ?? _bg;
+                _cardStyle = (u['card_style'] as String?) ?? _cardStyle;
       });
     } catch (_) {}
   }
