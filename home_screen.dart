@@ -4275,6 +4275,21 @@ class AppearanceCard extends StatefulWidget {
               _animChip('🦅', const HunterBirdIcon(size: 52)),
             ],
           ),
+                    _title(tr('রেজাল্ট কার্ডের ধরন', 'Result card style')),
+          Row(
+            children: [
+              _chip(tr('পূর্ণ কার্ড', 'Full card'), _cardStyle == 'full', () {
+                setState(() => _cardStyle = 'full');
+                _save({'card_style': 'full'});
+              }),
+              const SizedBox(width: 8),
+              _chip(tr('ছোট (বাটনের নিচে)', 'Compact (below button)'),
+                  _cardStyle == 'compact', () {
+                setState(() => _cardStyle = 'compact');
+                _save({'card_style': 'compact'});
+              }),
+            ],
+          ),
           _title('${tr('বাটনের সাইজ', 'Button size')}: $_size'),
           Slider(
             value: _size.toDouble(),
