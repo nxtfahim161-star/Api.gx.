@@ -4087,6 +4087,7 @@ class AppearanceCard extends StatefulWidget {
   String _pos = 'top';
   int _cardAlpha = 96;
   String _bg = 'aurora';
+    String _cardStyle = 'full';
 
   @override
   void initState() {
