@@ -1,114 +1,185 @@
+
 name: Build APK
 
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches:
+      - main
+
+permissions:
+  contents: read
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+    timeout-minutes: 30
 
-      - uses: actions/setup-java@v4
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
 
-      - uses: subosito/flutter-action@v2
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
         with:
           channel: stable
           cache: true
 
-      - name: Create Flutter project
-        run: flutter create --org com.example --project-name gasi_candle_ai --platforms android .
-
-      - name: Merge Dart files
+      - name: Check source files
+        shell: bash
         run: |
+          set -euo pipefail
+          echo "Repository root: $GITHUB_WORKSPACE"
+          echo "Available files:"
+          find . -maxdepth 3 -type f \
+            \( -name '*.kt' -o -name '*.dart' \
+            -o -name 'pubspec.yaml' \) | sort
+
+          for f in \
+            MainActivity.kt \
+            OverlayService.kt \
+            AndroidManifest.xml \
+            file_paths.xml \
+            KeySound.kt \
+            CompactCard.kt \
+            AnalysisPrompt.kt \
+            AnimButton.kt
+          do
+            if [ ! -f "$f" ]; then
+              echo "::error::Required source file missing: $f"
+              exit 1
+            fi
+          done
+
+      - name: Create Android project
+        run: |
+          flutter create \
+            --org com.example \
+            --project-name gasi_candle_ai \
+            --platforms android .
+
+      - name: Merge Dart source files
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p lib
+
           {
             printf "import 'dart:convert';\n"
             printf "import 'package:flutter/material.dart';\n"
             printf "import 'package:flutter/services.dart';\n\n"
+
             for f in main.dart result_card.dart home_screen.dart; do
               if [ -f "$f" ]; then
-                sed -E "s/\}import /}\nimport /g" "$f" | grep -v "^import "
+                sed -E 's/}import /}\nimport /g' "$f" |
+                  grep -v '^import ' || true
                 echo
               fi
             done
           } > lib/main.dart
+
+          test -s lib/main.dart || {
+            echo "::error::lib/main.dart is empty"
+            exit 1
+          }
+
           rm -f ./*.dart
           rm -rf test
 
-      - name: Place Android files
+      - name: Install Android source files
+        shell: bash
         run: |
-          D=android/app/src/main/kotlin/com/example/gasi_candle_ai
-          mkdir -p $D android/app/src/main/res/xml
-          sed -E "s/\}package /}\npackage /g" OverlayService.kt > /tmp/os.kt
-          if [ "$(grep -c '^package ' /tmp/os.kt)" -ge 2 ]; then
-            awk -v d="$D" '/^package /{n++} n==1{print > (d "/Prompt.kt")} n>=2{print > (d "/OverlayService.kt")}' /tmp/os.kt
-          else
-            cp /tmp/os.kt $D/OverlayService.kt
-            if [ -f Prompt.kt ]; then cp Prompt.kt $D/Prompt.kt; fi
-          fi
-          cp MainActivity.kt $D/MainActivity.kt
-          cp AndroidManifest.xml android/app/src/main/AndroidManifest.xml
-          cp file_paths.xml android/app/src/main/res/xml/file_paths.xml
+          set -euo pipefail
 
-      - name: Add default API keys from GitHub Secrets
+          D="android/app/src/main/kotlin/com/example/gasi_candle_ai"
+          mkdir -p "$D" android/app/src/main/res/xml
+
+          cp MainActivity.kt "$D/MainActivity.kt"
+          cp AndroidManifest.xml \
+            android/app/src/main/AndroidManifest.xml
+          cp file_paths.xml \
+            android/app/src/main/res/xml/file_paths.xml
+
+          cp KeySound.kt "$D/KeySound.kt"
+          cp CompactCard.kt "$D/CompactCard.kt"
+          cp AnalysisPrompt.kt "$D/AnalysisPrompt.kt"
+          cp AnimButton.kt "$D/AnimButton.kt"
+
+          sed -E 's/}package /}\npackage /g' \
+            OverlayService.kt > /tmp/OverlayService.kt
+
+          if [ "$(grep -c '^package ' /tmp/OverlayService.kt)" -ge 2 ]; then
+            awk -v d="$D" '
+              /^package / { n++ }
+              n == 1 { print > (d "/Prompt.kt"); next }
+              n >= 2 { print > (d "/OverlayService.kt") }
+            ' /tmp/OverlayService.kt
+          else
+            cp /tmp/OverlayService.kt "$D/OverlayService.kt"
+          fi
+
+      - name: Configure Android build
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          GRADLE_FILE="android/app/build.gradle.kts"
+
+          if [ ! -f "$GRADLE_FILE" ]; then
+            echo "::error::Missing $GRADLE_FILE"
+            exit 1
+          fi
+
+          sed -i \
+            's/minSdk = flutter.minSdkVersion/minSdk = 26/' \
+            "$GRADLE_FILE"
+
+          echo "Android build configuration checked."
+
+      - name: Add API keys
         env:
           GEMINI_KEY: ${{ secrets.GEMINI_KEY }}
           TD_KEY: ${{ secrets.TD_KEY }}
         run: |
-          A=android/app/src/main/assets
-          mkdir -p $A
-          printf '%s\n%s\n' "$GEMINI_KEY" "$TD_KEY" > $A/keys.txt
+          mkdir -p android/app/src/main/assets
+          printf '%s\n%s\n' \
+            "$GEMINI_KEY" "$TD_KEY" \
+            > android/app/src/main/assets/keys.txt
 
-      - name: Android build fixes
-        run: |
-          D=android/app/src/main/kotlin/com/example/gasi_candle_ai
-          cp KeySound.kt $D/KeySound.kt
-          cp CompactCard.kt $D/CompactCard.kt
-          cp AnalysisPrompt.kt $D/AnalysisPrompt.kt
-          cp AnimButton.kt $D/AnimButton.kt
-          grep -q KeySound $D/MainActivity.kt || sed -i 's/super.configureFlutterEngine(flutterEngine)/super.configureFlutterEngine(flutterEngine)\n        KeySound.register(flutterEngine)/' $D/MainActivity.kt
-          sed -i 's/val p = mpm.getMediaProjection(code, data)/val p = mpm.getMediaProjection(code, data) ?: throw IllegalStateException("MediaProjection null")/' $D/OverlayService.kt
-          grep -n "getMediaProjection" $D/OverlayService.kt || true
-          if [ -f android/app/build.gradle.kts ]; then
-            sed -i 's/minSdk = flutter.minSdkVersion/minSdk = 26/' android/app/build.gradle.kts
-            printf '\nandroid {\n    lint {\n        checkReleaseBuilds = false\n        abortOnError = false\n    }\n}\n' >> android/app/build.gradle.kts
-          fi
-
-      - name: Add logo
-        run: |
-          if [ -f logo.png ]; then
-            mkdir -p assets
-            cp logo.png assets/logo.png
-            flutter pub add dev:flutter_launcher_icons
-            printf '\nflutter_launcher_icons:\n  android: true\n  ios: false\n  image_path: "assets/logo.png"\n' >> pubspec.yaml
-            sed -i 's/^flutter:$/flutter:\n  assets:\n    - assets\/logo.png/' pubspec.yaml
-            dart run flutter_launcher_icons
-          fi
-
-      - name: Add earth hero images
+      - name: Add logo and images
+        shell: bash
         run: |
           mkdir -p assets
+
+          if [ -f logo.png ]; then
+            cp logo.png assets/logo.png
+          fi
+
           for f in earth_hero.png earth_globe.png; do
-            src=""
-            if [ -f "images/$f" ]; then src="images/$f"; elif [ -f "$f" ]; then src="$f"; fi
-            if [ -n "$src" ]; then
-              cp "$src" "assets/$f"
-              sed -i "s#^    - assets/logo.png\$#    - assets/logo.png\n    - assets/$f#" pubspec.yaml
+            if [ -f "images/$f" ]; then
+              cp "images/$f" "assets/$f"
+            elif [ -f "$f" ]; then
+              cp "$f" "assets/$f"
             fi
           done
 
-      - run: flutter pub get
+      - name: Install dependencies
+        run: flutter pub get
 
-      - run: flutter analyze --no-fatal-infos --no-fatal-warnings
+      - name: Analyze Flutter code
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings
 
-      - run: flutter build apk --release
+      - name: Build release APK
+        run: flutter build apk --release
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
         with:
           name: gasi-candle-analysis-ai
           path: build/app/outputs/flutter-apk/app-release.apk
