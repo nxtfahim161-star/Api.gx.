@@ -2166,7 +2166,7 @@ class HomePage extends StatelessWidget {
         ),
         const SizedBox(height: 14),
         Center(
-          child: GlobeHero(running: running, busy: busy, onTap: onToggle),
+          child: EarthHero(running: running, busy: busy, onTap: onToggle),
         ),
         if (!granted) ...[
           const SizedBox(height: 6),
