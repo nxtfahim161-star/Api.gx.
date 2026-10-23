@@ -70,6 +70,7 @@ jobs:
           cp KeySound.kt $D/KeySound.kt
           cp CompactCard.kt $D/CompactCard.kt
           cp AnalysisPrompt.kt $D/AnalysisPrompt.kt
+          cp AnimButton.kt $D/AnimButton.kt
           grep -q KeySound $D/MainActivity.kt || sed -i 's/super.configureFlutterEngine(flutterEngine)/super.configureFlutterEngine(flutterEngine)\n        KeySound.register(flutterEngine)/' $D/MainActivity.kt
           sed -i 's/val p = mpm.getMediaProjection(code, data)/val p = mpm.getMediaProjection(code, data) ?: throw IllegalStateException("MediaProjection null")/' $D/OverlayService.kt
           grep -n "getMediaProjection" $D/OverlayService.kt || true
@@ -88,6 +89,18 @@ jobs:
             sed -i 's/^flutter:$/flutter:\n  assets:\n    - assets\/logo.png/' pubspec.yaml
             dart run flutter_launcher_icons
           fi
+
+      - name: Add earth hero images
+        run: |
+          mkdir -p assets
+          for f in earth_hero.png earth_globe.png; do
+            src=""
+            if [ -f "images/$f" ]; then src="images/$f"; elif [ -f "$f" ]; then src="$f"; fi
+            if [ -n "$src" ]; then
+              cp "$src" "assets/$f"
+              sed -i "s#^    - assets/logo.png\$#    - assets/logo.png\n    - assets/$f#" pubspec.yaml
+            fi
+          done
 
       - run: flutter pub get
 
