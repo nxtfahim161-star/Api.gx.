@@ -4599,3 +4599,269 @@ class _WelcomeScreenState extends State<WelcomeScreen>
     );
   }
 }
+// ============================================================
+// হোম স্ক্রিনের পৃথিবী: ছবির মতো ইন্টারফেস + Start চাপলে ৩৬০° ঘুরন
+//
+// কীভাবে বসাবেন:
+//  ধাপ ১) এই ফাইলের সবটুকু home_screen.dart-এর একদম শেষে বসান।
+//  ধাপ ২) home_screen.dart-এর HomePage ক্লাসে (প্রায় ২১৮০ নম্বর লাইনে) খুঁজুন:
+//           GlobeHero(running: running, busy: busy, onTap: onToggle),
+//         এবং বদলে লিখুন:
+//           EarthHero(running: running, busy: busy, onTap: onToggle),
+//  ধাপ ৩) earth_hero.png ও earth_globe.png রিপোজিটরির মূল ফোল্ডারে আপলোড করুন
+//         (workflow নিজে এগুলো অ্যাপে ঢুকিয়ে দেবে)।
+//
+// কীভাবে ঘোরে:
+//  - Start চাপলে পৃথিবী সাথে সাথে একবার পূর্ণ ৩৬০° ঘোরে (প্রায় ১.৫ সেকেন্ড)।
+//  - বিশ্লেষণ চালু থাকলে ধীরে ধীরে ঘুরতে থাকে (প্রায় ২৪ সেকেন্ডে একপাক)।
+//  - Stop চাপলে চলতি পাকটা শেষ করে স্থির হয়ে দাঁড়ায়।
+//  - ক্যান্ডেল, নিয়ন রিং ও আভা জায়গায় স্থির থাকে, শুধু পৃথিবীর গোলকটা ঘোরে।
+//
+// ছবি না পাওয়া গেলে অ্যাপ আগের GlobeHero-তেই ফিরে যায়, তাই কিছু ভাঙে না।
+// ============================================================
+class EarthHero extends StatefulWidget {
+  final bool running;
+  final bool busy;
+  final VoidCallback onTap;
+  const EarthHero({
+    super.key,
+    required this.running,
+    required this.busy,
+    required this.onTap,
+  });
+
+  @override
+  State<EarthHero> createState() => _EarthHeroState();
+}
+
+class _EarthHeroState extends State<EarthHero> with TickerProviderStateMixin {
+  // earth_hero.png-এর মাপ ও ভেতরের বাটনের কেন্দ্র (অনুপাতে)
+  static const double _imgW = 851;
+  static const double _imgH = 780;
+  static const double _cx = 426 / 851;
+  static const double _cy = 326 / 780;
+  // earth_globe.png (ঘোরা গোলক): কেন্দ্র ও মাপ (ছবির প্রস্থের অনুপাতে)
+  static const double _gx = 422 / 851;
+  static const double _gy = 321 / 780;
+  static const double _gs = 600 / 851;
+
+  late final AnimationController _c; // ভাসা ও আভা
+  late final AnimationController _spin; // গোলকের ঘুরন
+  bool? _hasImage; // null = দেখা হচ্ছে
+  bool _hasGlobe = false;
+
+  // 0 স্থির, 1 শুরুর পূর্ণ ঘুরন, 2 ধীর ঘুরন, 3 থামার ঘুরন
+  int _phase = 0;
+  double _from = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _c = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 7),
+    )..repeat();
+    _spin = AnimationController(vsync: this);
+    rootBundle.load('assets/earth_hero.png').then((_) {
+      if (mounted) setState(() => _hasImage = true);
+    }).catchError((Object _) {
+      if (mounted) setState(() => _hasImage = false);
+    });
+    rootBundle.load('assets/earth_globe.png').then((_) {
+      if (!mounted) return;
+      setState(() => _hasGlobe = true);
+      if (widget.running) _startSlow();
+    }).catchError((Object _) {});
+  }
+
+  @override
+  void didUpdateWidget(EarthHero old) {
+    super.didUpdateWidget(old);
+    if (!_hasGlobe) return;
+    if (old.running && !widget.running) {
+      if (_phase == 2) _end();
+    } else if (!old.running && widget.running) {
+      if (_phase == 0 || _phase == 3) _startSlow();
+    }
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    _spin.dispose();
+    super.dispose();
+  }
+
+  double get _angle {
+    final v = _spin.value;
+    switch (_phase) {
+      case 1:
+        return Curves.easeInOutCubic.transform(v) * 2 * kPi;
+      case 2:
+        return v * 2 * kPi;
+      case 3:
+        return _from + (2 * kPi - _from) * Curves.easeOut.transform(v);
+      default:
+        return 0;
+    }
+  }
+
+  /// ট্যাপ করলে সাথে সাথে একবার পূর্ণ ৩৬০° ঘোরা
+  void _kick() {
+    if (!_hasGlobe || widget.busy) return;
+    if (_phase == 1 || _phase == 2 || _phase == 3) return;
+    _phase = 1;
+    _spin.duration = const Duration(milliseconds: 1500);
+    _spin.forward(from: 0).whenComplete(() {
+      if (!mounted || _phase != 1) return;
+      if (widget.running) {
+        _startSlow();
+      } else {
+        _phase = 0;
+        _spin.value = 0;
+      }
+    });
+  }
+
+  /// চালু থাকা অবস্থায় ধীর ঘুরন
+  void _startSlow() {
+    _phase = 2;
+    _spin.duration = const Duration(seconds: 24);
+    _spin.repeat();
+  }
+
+  /// থামলে চলতি পাক শেষ করে স্থির হওয়া
+  void _end() {
+    _from = _angle % (2 * kPi);
+    _phase = 3;
+    _spin.duration = const Duration(milliseconds: 1000);
+    _spin.forward(from: 0).whenComplete(() {
+      if (!mounted || _phase != 3) return;
+      _phase = 0;
+      _spin.value = 0;
+    });
+  }
+
+  void _onTap() {
+    _kick();
+    widget.onTap();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_hasImage == false) {
+      return GlobeHero(
+        running: widget.running,
+        busy: widget.busy,
+        onTap: widget.onTap,
+      );
+    }
+    return LayoutBuilder(
+      builder: (context, box) {
+        final w = box.maxWidth > 420 ? 420.0 : box.maxWidth;
+        final h = w * _imgH / _imgW;
+        final btn = w * 0.36;
+        final glow = w * 0.74;
+        return SizedBox(
+          width: w,
+          height: h,
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              if (_hasImage == true)
+                Positioned.fill(
+                  child: RepaintBoundary(
+                    child: AnimatedBuilder(
+                      animation: _c,
+                      builder: (context, child) {
+                        final s = _gSin(_c.value * 2 * kPi);
+                        // ধীর ভাসা ও নিঃশ্বাসের মতো সামান্য বড়-ছোট
+                        return Transform.translate(
+                          offset: Offset(0, 2.5 * s),
+                          child: Transform.scale(
+                            scale: 1 + 0.006 * s,
+                            child: child,
+                          ),
+                        );
+                      },
+                      child: Stack(
+                        clipBehavior: Clip.none,
+                        children: [
+                          Positioned.fill(
+                            child: Image.asset(
+                              'assets/earth_hero.png',
+                              fit: BoxFit.fill,
+                              filterQuality: FilterQuality.medium,
+                            ),
+                          ),
+                          if (_hasGlobe)
+                            Positioned(
+                              left: _gx * w - _gs * w / 2,
+                              top: _gy * h - _gs * w / 2,
+                              width: _gs * w,
+                              height: _gs * w,
+                              child: AnimatedBuilder(
+                                animation: _spin,
+                                builder: (context, child) => Transform.rotate(
+                                  angle: _angle,
+                                  child: child,
+                                ),
+                                child: Image.asset(
+                                  'assets/earth_globe.png',
+                                  fit: BoxFit.fill,
+                                  filterQuality: FilterQuality.medium,
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              // বিশ্লেষণ চালু থাকলে গোলাপি আভা জ্বলে-নেভে
+              if (widget.running)
+                Positioned(
+                  left: _cx * w - glow / 2,
+                  top: _cy * h - glow / 2,
+                  child: IgnorePointer(
+                    child: AnimatedBuilder(
+                      animation: _c,
+                      builder: (context, _) {
+                        final p = 0.5 + 0.5 * _gSin(_c.value * 4 * kPi);
+                        return Container(
+                          width: glow,
+                          height: glow,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            boxShadow: [
+                              BoxShadow(
+                                color: const Color(0xFFFF6685)
+                                    .withOpacity(0.14 + 0.14 * p),
+                                blurRadius: 60,
+                                spreadRadius: 4,
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ),
+              Positioned(
+                left: _cx * w - btn / 2,
+                top: _cy * h - btn / 2,
+                child: StartButton(
+                  size: btn,
+                  running: widget.running,
+                  busy: widget.busy,
+                  onTap: _onTap,
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+  
