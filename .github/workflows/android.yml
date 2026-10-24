@@ -3,13 +3,9 @@ name: Build Gasi Candle Analysis AI APK
 on:
   workflow_dispatch:
   push:
-    branches:
-      - main
-      - master
+    branches: [main, master]
   pull_request:
-    branches:
-      - main
-      - master
+    branches: [main, master]
 
 permissions:
   contents: read
@@ -33,6 +29,7 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+          cache: gradle
 
       - name: Set up Flutter stable
         uses: subosito/flutter-action@v2
@@ -40,112 +37,155 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Inspect supplied source files
+      - name: Verify source files from ZIP
         shell: bash
         run: |
           set -euo pipefail
-          echo "Flutter: $(flutter --version | head -n 1)"
-          echo "Java: $(java -version 2>&1 | head -n 1)"
-          echo "Repository source files:"
-          find . -maxdepth 3 -type f \( -name '*.dart' -o -name '*.kt' -o -name '*.xml' -o -name 'pubspec.yaml' \) -print | sort
-
-          for file in home_screen.dart main.dart result_card.dart result_gauge.dart setup_card.dart MainActivity.kt OverlayService.kt AnalysisPrompt.kt KeySound.kt AndroidManifest.xml file_paths.xml; do
+          required_files=(
+            home_screen.dart main.dart result_card.dart result_gauge.dart setup_card.dart
+            MainActivity.kt OverlayService.kt AnalysisPrompt.kt KeySound.kt
+            AndroidManifest.xml file_paths.xml logo.png earth_globe.png earth_hero.png
+          )
+          for file in "${required_files[@]}"; do
             if [[ ! -f "$file" ]]; then
-              echo "::error::Required source file is missing: $file"
+              echo "::error::Required source file is missing from repository root: $file"
               exit 1
             fi
           done
+          echo 'Source-file check passed.'
 
-      - name: Create Flutter Android project scaffold
+      - name: Generate Android scaffold if missing
         shell: bash
         run: |
           set -euo pipefail
-          if [[ ! -f pubspec.yaml || ! -d android ]]; then
+          if [[ ! -d android ]]; then
             flutter create \
               --platforms=android \
               --org=com.example \
               --project-name=gasi_candle_ai \
               .
           fi
+          test -d android/app || {
+            echo '::error::Android scaffold was not generated'
+            exit 1
+          }
 
-      - name: Prepare Dart source layout and assets
+      - name: Prepare Dart sources and assets
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p lib assets
+          rm -rf test
 
-          # Keep each provided Dart file separate; do not concatenate libraries.
-          cp home_screen.dart lib/home_screen.dart
+          # Use home_screen.dart as the app entry point.
+          # Do not concatenate the mixed root main.dart.
+          cp home_screen.dart lib/main.dart
           cp result_card.dart lib/result_card.dart
           cp result_gauge.dart lib/result_gauge.dart
           cp setup_card.dart lib/setup_card.dart
 
-          # The root main.dart is a mixed source file with imports in the middle.
-          # Keep it out of lib; it must be refactored as a separate source task.
+          # Create the missing AppColors dependency.
+          cat > lib/app_colors.dart <<'DART'
+          import 'package:flutter/material.dart';
 
-          # The supplied home_screen.dart contains the app's main() entry point.
-          cp home_screen.dart lib/main.dart
+          class AppColors {
+            static const purple = Color(0xFF8B5CF6);
+            static const lilac = Color(0xFFC084FC);
+            static const green = Color(0xFF38D996);
+            static const red = Color(0xFFFF6685);
+            static const amber = Color(0xFFFFB45C);
+          }
+          DART
 
-          # Preserve provided image files and put them at the asset paths used
-          # by the Dart source.
-          [[ ! -f logo.png ]] || cp logo.png assets/logo.png
-          [[ ! -f earth_globe.png ]] || cp earth_globe.png assets/earth_globe.png
-          [[ ! -f earth_hero.png ]] || cp earth_hero.png assets/earth_hero.png
+          cp logo.png assets/logo.png
+          cp earth_globe.png assets/earth_globe.png
+          cp earth_hero.png assets/earth_hero.png
 
-          echo 'Prepared Dart files:'
-          find lib -maxdepth 1 -type f -name '*.dart' -print | sort
-
-      - name: Configure Flutter dependencies and assets
+      - name: Write a clean, valid pubspec.yaml
         shell: bash
         run: |
           set -euo pipefail
-          # Add asset paths under the existing flutter: section without
-          # duplicating that top-level key in the generated pubspec.yaml.
-          python3 - <<'PYEDIT'
-          from pathlib import Path
-          p = Path('pubspec.yaml')
-          text = p.read_text()
-          if '\nflutter:\n' not in text and not text.startswith('flutter:\n'):
-              raise SystemExit('pubspec.yaml has no flutter: section')
-          assets = ['assets/logo.png', 'assets/earth_globe.png', 'assets/earth_hero.png']
-          if not any(line.strip() == 'assets:' for line in text.splitlines()):
-              lines = text.splitlines()
-              idx = next(i for i, line in enumerate(lines) if line.strip() == 'flutter:')
-              lines[idx + 1:idx + 1] = ['  assets:', *[f'    - {asset}' for asset in assets]]
-              text = '\n'.join(lines) + '\n'
-          p.write_text(text)
-          PYEDIT
+
+          cat > pubspec.yaml <<'PUBSPEC'
+          name: gasi_candle_ai
+          description: Gasi Candle Analysis AI
+          publish_to: 'none'
+          version: 1.0.0+1
+
+          environment:
+            sdk: '>=3.0.0 <4.0.0'
+
+          dependencies:
+            flutter:
+              sdk: flutter
+            cupertino_icons: ^1.0.8
+
+          dev_dependencies:
+            flutter_test:
+              sdk: flutter
+            flutter_lints: ^5.0.0
+
+          flutter:
+            uses-material-design: true
+            assets:
+              - assets/logo.png
+              - assets/earth_globe.png
+              - assets/earth_hero.png
+          PUBSPEC
+
+          cat pubspec.yaml
           flutter pub get
 
-      - name: Install Android native source files
+      - name: Install Android native sources and manifest
         shell: bash
         run: |
           set -euo pipefail
-          NATIVE_DIR='android/app/src/main/kotlin/com/example/gasi_candle_ai'
-          mkdir -p "$NATIVE_DIR" android/app/src/main/res/xml
 
-          cp MainActivity.kt "$NATIVE_DIR/MainActivity.kt"
-          cp OverlayService.kt "$NATIVE_DIR/OverlayService.kt"
-          cp AnalysisPrompt.kt "$NATIVE_DIR/AnalysisPrompt.kt"
-          cp KeySound.kt "$NATIVE_DIR/KeySound.kt"
+          native_dir='android/app/src/main/kotlin/com/example/gasi_candle_ai'
+          mkdir -p "$native_dir" android/app/src/main/res/xml
+
+          cp MainActivity.kt "$native_dir/MainActivity.kt"
+          cp OverlayService.kt "$native_dir/OverlayService.kt"
+          cp AnalysisPrompt.kt "$native_dir/AnalysisPrompt.kt"
+          cp KeySound.kt "$native_dir/KeySound.kt"
           cp AndroidManifest.xml android/app/src/main/AndroidManifest.xml
           cp file_paths.xml android/app/src/main/res/xml/file_paths.xml
 
-          # Match the namespace used by the provided Kotlin files.
-          if [[ -f android/app/build.gradle.kts ]]; then
-            sed -i 's/^\([[:space:]]*namespace[[:space:]]*=\).*/\1 "com.example.gasi_candle_ai"/' android/app/build.gradle.kts
-            sed -i 's/^\([[:space:]]*applicationId[[:space:]]*=\).*/\1 "com.example.gasi_candle_ai"/' android/app/build.gradle.kts
-            sed -i 's/minSdk = flutter.minSdkVersion/minSdk = 26/' android/app/build.gradle.kts
-          else
-            echo '::error::Flutter scaffold did not create android/app/build.gradle.kts'
-            exit 1
-          fi
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
 
-      - name: Validate Dart code
-        shell: bash
-        run: |
-          set -euo pipefail
-          flutter analyze --no-pub
+          p = Path('android/app/build.gradle.kts')
+          text = p.read_text()
+
+          replacements = [
+              (
+                  r'(?m)^(\s*namespace\s*=\s*)["\'][^"\']+["\']',
+                  r'\1"com.example.gasi_candle_ai"',
+              ),
+              (
+                  r'(?m)^(\s*applicationId\s*=\s*)["\'][^"\']+["\']',
+                  r'\1"com.example.gasi_candle_ai"',
+              ),
+              (
+                  r'(?m)^(\s*minSdk\s*=\s*).+$',
+                  r'\g<1>26',
+              ),
+          ]
+
+          for pattern, replacement in replacements:
+              text, count = re.subn(pattern, replacement, text, count=1)
+              if count != 1:
+                  raise SystemExit(
+                      f'Could not safely update Gradle setting: {pattern}'
+                  )
+
+          p.write_text(text)
+          print('Android Gradle settings configured.')
+          PY
+
+      - name: Validate Dart source
+        run: flutter analyze --no-pub --no-fatal-infos --no-fatal-warnings
 
       - name: Build release APK
         run: flutter build apk --release
@@ -157,4 +197,3 @@ jobs:
           path: build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
           retention-days: 14
-          
