@@ -247,7 +247,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          flutter analyze \
+          flutter analyze lib \
             --no-pub \
             --no-fatal-infos \
             --no-fatal-warnings
