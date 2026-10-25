@@ -2512,57 +2512,15 @@ class GasiNavBar extends StatelessWidget {
     );
   }
 }
-
-String _two(int n) => n < 10 ? '0$n' : '$n';
-
-String _tfShort(int m) => m >= 60 ? '${m ~/ 60}h' : '${m}m';
-
-/// ইতিহাসের একটা ফলাফল: ✅/❌ বসানো বা বদলানো যায়।
-class HistoryTile extends StatelessWidget {
-  final Map<String, dynamic> item;
-  final void Function(bool hit) onMark;
-  const HistoryTile({super.key, required this.item, required this.onMark});
-
-  String _when(num ms) {
-    final d = DateTime.fromMillisecondsSinceEpoch(ms.toInt());
-    return '${_two(d.day)}/${_two(d.month)}  ${_two(d.hour)}:${_two(d.minute)}';
-  }
-
-  Widget _outcomeBtn(String label, bool sel, Color c, VoidCallback onTap) {
-    return Expanded(
-      child: GestureDetector(
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 9),
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: sel ? c.withOpacity(0.25) : Colors.white.withOpacity(0.04),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: sel ? c : Colors.white.withOpacity(0.08)),
-          ),
-          child: Text(label,
-              style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w800,
-                  color: sel ? c : const Color(0xFFB9B3BF))),
-        ),
-      ),
-    );
-  }
+/// সেটিংস: আলাদা আলাদা সেকশনে সাজানো।
+class SettingsScreen extends StatefulWidget {
+  const SettingsScreen({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    final e = item;
-    final up = (e['up'] as num?)?.toDouble() ?? 0;
-    final down = (e['down'] as num?)?.toDouble() ?? 0;
-    final isUp = up >= down;
-    final c = isUp ? AppColors.green : AppColors.red;
-    final asset = (e['asset'] as String?) ?? '';
-    final mode = (e['mode'] as String?) ?? 'chart';
-    final hit = (e['hit'] as num?)?.toInt() ?? -1;
-    final modeText = mode == 'live'
-        ? tr('আসল ডাটা', 'Real data')
-        : (mode == 'web'
+  State<SettingsScreen> createState() => _OldSettingsScreenState();
+}
+
+class _OldSettingsScreenState extends State<SettingsScreen>
             ? tr('ওয়েবসহ', 'With web')
             : tr('শুধু চার্ট', 'Chart only'));
     return Container(
