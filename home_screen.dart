@@ -3161,7 +3161,9 @@ class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
 
   @override
-  State<SettingsScreen> createState() => _SettingsScreenState();
+    State<SettingsScreen> createState() => _OldSettingsScreenState();
+}
+
 class _OldSettingsScreenState extends State<SettingsScreen>
     with LangAware<SettingsScreen> {
   @override
