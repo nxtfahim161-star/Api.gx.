@@ -163,8 +163,7 @@ jobs:
           cp file_paths.xml \
             android/app/src/main/res/xml/file_paths.xml
 
-          # AnalysisPrompt is already declared in OverlayService.kt.
-          # Do not copy AnalysisPrompt.kt into the same Kotlin package.
+          # AnalysisPrompt (v3) is declared inside OverlayService.kt.
 
           python3 - <<'PY'
           from pathlib import Path
