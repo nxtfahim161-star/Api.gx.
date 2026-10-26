@@ -235,6 +235,28 @@ jobs:
           print("Android namespace and application ID verified.")
           PY
 
+      - name: Set minimum Android version to 8.0
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path("android/app/build.gradle.kts")
+          source = path.read_text()
+          new, count = re.subn(
+              r'(?m)^(\s*minSdk\s*=\s*)[^\n]+',
+              r'\g<1>26',
+              source,
+              count=1,
+          )
+          if count == 1:
+              path.write_text(new)
+              print("minSdk set to 26")
+          else:
+              print("::warning::minSdk line not found, left unchanged")
+          PY
+
       - name: Validate Flutter dependencies
         shell: bash
         run: |
