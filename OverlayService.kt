@@ -1415,7 +1415,7 @@ class OverlayService : Service() {
         val prompt = "NOTE: No screenshot is attached. The exact numeric candle data below was " +
             "fetched live from a market data API a moment ago; treat it as the chart and skip " +
             "any step that needs reading an image.\n\n" +
-            AnalysisPrompt.TEXT.trimIndent() + horizonText(minutes) +
+                        AnalysisPrompt.TEXT_FAST.trimIndent() + horizonText(minutes) +
             "\n\nMARKET DATA (exact numbers):\n" + data + liveCtx
 
         var r = request(key, "", prompt, false, true)
