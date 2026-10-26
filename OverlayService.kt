@@ -1084,7 +1084,8 @@ class OverlayService : Service() {
 
     private fun setupProjection(code: Int, data: Intent) {
         val mpm = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-        val p = mpm.getMediaProjection(code, data)
+                val p = mpm.getMediaProjection(code, data)
+            ?: throw IllegalStateException("MediaProjection unavailable")
         p.registerCallback(object : MediaProjection.Callback() {
             override fun onStop() {
                 handler.post { stopSelf() }
