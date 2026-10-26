@@ -244,12 +244,23 @@ jobs:
       - name: Analyze Dart source
         shell: bash
         run: |
-          set -euo pipefail
-
+          set +e
           flutter analyze lib \
             --no-pub \
             --no-fatal-infos \
-            --no-fatal-warnings
+            --no-fatal-warnings > analyze.txt 2>&1
+          code=$?
+          set -e
+
+          {
+            echo "### Dart errors (first 30)"
+            echo '```'
+            grep -E "^\s*error •" analyze.txt | head -30 || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          grep -E "^\s*error •" analyze.txt | head -30 || true
+          exit $code
 
       - name: Build release APK
         shell: bash
