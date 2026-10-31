@@ -1,0 +1,31 @@
+name: gasi_candle_ai
+description: "Cortex A.N.S - Personal Trading Analysis Assistant"
+publish_to: "none"
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.5.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  google_fonts: ^6.2.1
+  shared_preferences: ^2.3.2
+  share_plus: ^10.1.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+  flutter_launcher_icons: ^0.14.1
+
+flutter_launcher_icons:
+  image_path: "assets/logo.png"
+  android: true
+  ios: false
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/logo.png
+    
